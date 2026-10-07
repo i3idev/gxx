@@ -1,0 +1,29 @@
+# Rust
+/target/
+
+# Piper TTS models
+/model/*.onnx
+/model/*.onnx.json
+
+# Generated audio/cache
+/audio/
+/.cache/
+*.wav
+
+# Local runtime data
+*.db
+*.sqlite
+*.sqlite3
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
