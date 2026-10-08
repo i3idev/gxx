@@ -1,0 +1,7 @@
+# Code ownership for the GXX project
+* @i3idev
+
+# Specific areas
+/src/main.rs @i3idev
+/Cargo.toml @i3idev
+/.github/ @i3idev
