@@ -1,0 +1,121 @@
+# gxx sample script — run with: gxx load sample.gxx
+
+# --- SETUP ---
+# gxx init                    # initialize ~/.gxx
+# gxx db new vocab            # create database "vocab"
+# gxx db use vocab            # set active
+
+# --- WORDS ---
+add book کتاب -p n -l A1
+add run دویدن -p v -l A2
+add fast سریع -p adj -l A2
+add house خانه -p n -l A1
+add old کهنه -p adj -l A2
+
+# --- TRANSLATIONS ---
+tr book +volume +textbook
+tr run +sprint +jog
+tr fast +rapid +swift
+
+# --- SYNONYMS ---
+syn book +volume +textbook
+syn run +sprint +jog
+syn fast +rapid +swift
+
+# --- ANTONYMS ---
+ant fast +slow +sluggish
+ant old +new +modern
+
+# --- EXAMPLES ---
+ex book "I opened the book." "من کتاب را گشودم."
+ex book "She is reading a book." "او یک کتاب می‌خواند."
+ex run "He runs every morning." "او هر صبح می‌دود."
+ex fast "The car is very fast." "ماشین بسیار سریع است."
+ex house "This is my house." "این خانه من است."
+ex old "That is an old building." "آن یک ساختمان کهنه است."
+
+# --- METADATA ---
+pos book n
+lvl book A1
+pron book bʊk
+def book "a set of written or printed pages"
+note book "review flashcards daily"
+
+pos run v
+lvl run A2
+pron run rʌn
+def run "move at a speed faster than a walk"
+note run "irregular verb: run/ran/run"
+
+pos fast adj
+lvl fast A2
+pron fast fæst
+def fast "moving or capable of moving at high speed"
+
+pos house n
+lvl house A1
+pron house haʊs
+def house "a building for human habitation"
+
+pos old adj
+lvl old A2
+pron old oʊld
+def old "having lived for a long time"
+
+# --- SENSES ---
+sense book add "a set of pages for reading"
+sense book add "a volume in a series" --note "countable"
+sense run add "move quickly on foot"
+sense run add "operate or be in operation" --note "the engine runs"
+
+# --- COLLOCATIONS ---
+coll book add "open a book"
+coll book add "close a book"
+coll book add "read a book"
+coll run add "run fast"
+coll run add "run away"
+coll fast add "fast food"
+coll fast add "fast car"
+
+# --- WORD FAMILY ---
+family book add textbook -p n
+family book add booklet -p n
+family run add runner -p n
+family run add running -p n
+family fast add fasten -p v
+family fast add quickly -p adv
+
+# --- GRAMMAR ---
+gram add past_tense --cat verb --lvl A2 --rule "regular: v + ed"
+gram rule past_tense "add -ed to regular verbs (walk → walked)"
+gram desc past_tense "used for completed actions in the past"
+gram ex past_tense "I walked home." "من به خانه رفتم."
+gram ex past_tense "She played football." "او فوتبال بازی کرد."
+gram err past_tense "I goed"        # common learner error
+gram err past_tense "He runned"     # common learner error
+
+gram add present_continuous --cat verb --lvl A2 --rule "be + v-ing"
+gram rule present_continuous "am/is/are + verb-ing"
+gram ex present_continuous "I am walking." "من در حال رفتن هستم."
+
+# --- STYLE ---
+style add formal --cat register --lvl B1
+style rule formal "use complete sentences, avoid contractions"
+style ex formal "I cannot attend." "من نمی‌توانم شرکت کنم."
+
+style add informal --cat register --lvl A2
+style rule informal "contractions, phrasal verbs, slang OK"
+style ex informal "I can't make it." "من نمی‌تونم برسم."
+
+# --- FORM ---
+form add contraction --cat abbreviation --lvl A2
+form rule contraction "cannot → can't, will not → won't"
+form ex contraction "I can't go." "من نمی‌تونم بروم."
+
+form add possessive --cat grammar --lvl A1
+form rule possessive "noun + 's (singular), nouns + ' (plural)"
+form ex possessive "John's book." "کتاب جان."
+
+# Clean up errors
+gram err past_tense -1
+gram err past_tense -1
