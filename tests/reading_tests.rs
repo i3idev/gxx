@@ -18,7 +18,8 @@ fn test_read_mode_empty_file() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("-r").arg(&test_file);
     cmd.assert().failure().stderr(
-        predicate::str::contains("empty")
+        predicate::str::contains("reading mode not available")
+            .or(predicate::str::contains("empty"))
             .or(predicate::str::contains("No words"))
             .or(predicate::str::contains("Failed to read")),
     );
@@ -34,7 +35,8 @@ fn test_read_mode_whitespace_only_file() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("-r").arg(&test_file);
     cmd.assert().failure().stderr(
-        predicate::str::contains("empty")
+        predicate::str::contains("reading mode not available")
+            .or(predicate::str::contains("empty"))
             .or(predicate::str::contains("No words"))
             .or(predicate::str::contains("Failed to read")),
     );

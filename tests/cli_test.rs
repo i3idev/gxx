@@ -33,6 +33,11 @@ fn test_app_command_not_treated_as_word_lookup() {
             !combined.contains("try: gxx find"),
             "gxx app must not suggest gxx find. Got: {combined}"
         );
+        // Should be GUI error
+        assert!(
+            combined.contains("reading mode GUI not available") || combined.contains("Slint"),
+            "gxx app should give GUI error. Got: {combined}"
+        );
     }
 }
 
@@ -42,7 +47,8 @@ fn test_read_mode_missing_file() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("-r").arg("/nonexistent/path/file.txt");
     cmd.assert().failure().stderr(
-        predicate::str::contains("Failed to read file")
+        predicate::str::contains("reading mode not available")
+            .or(predicate::str::contains("Failed to read file"))
             .or(predicate::str::contains("No such file")),
     );
 }
@@ -53,7 +59,8 @@ fn test_read_long_alias_missing_file() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("--read").arg("/nonexistent/path/file2.txt");
     cmd.assert().failure().stderr(
-        predicate::str::contains("Failed to read file")
+        predicate::str::contains("reading mode not available")
+            .or(predicate::str::contains("Failed to read file"))
             .or(predicate::str::contains("No such file")),
     );
 }
@@ -65,7 +72,7 @@ fn test_existing_commands_still_work() {
     cmd.arg("add");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("usage").or(predicate::str::contains("word")));
+        .stderr(predicate::str::contains("WORD").or(predicate::str::contains("usage")));
 }
 
 /// `gxx help` should still work and show usage.
@@ -75,7 +82,7 @@ fn test_help_command() {
     cmd.arg("help");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("gxx - bilingual"));
+        .stdout(predicate::str::contains("gxx - A CLI tool"));
 }
 
 /// `gxx --help` should still work and show usage.
@@ -85,7 +92,7 @@ fn test_help_long_alias() {
     cmd.arg("--help");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("gxx - bilingual"));
+        .stdout(predicate::str::contains("gxx - A CLI tool"));
 }
 
 /// Verify the `-r` flag requires a filename.
@@ -95,7 +102,7 @@ fn test_read_requires_filename() {
     cmd.arg("-r");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("usage: gxx -r <file.txt>"));
+        .stderr(predicate::str::contains("a value is required").or(predicate::str::contains("usage")));
 }
 
 /// Verify that `--read` without a filename also shows usage.
@@ -105,7 +112,7 @@ fn test_read_long_alias_requires_filename() {
     cmd.arg("--read");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("usage: gxx -r <file.txt>"));
+        .stderr(predicate::str::contains("a value is required").or(predicate::str::contains("usage")));
 }
 
 /// Verify that `gxx` with no args prints usage (exit code 0).

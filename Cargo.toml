@@ -27,6 +27,7 @@ hound = "3"
 rubato = "5.0.1"
 ndarray = "0.17"
 audioadapter-buffers = "5.2"
+clap = { version = "4.5", features = ["derive", "help", "usage", "color", "env", "wrap_help", "std"] }
 
 [dev-dependencies]
 assert_cmd = "2"

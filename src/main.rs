@@ -1,5 +1,6 @@
 //! Main entry point.
 
+mod cli;
 mod cmd;
 mod db;
 mod error;
@@ -8,8 +9,10 @@ mod render;
 mod run;
 mod tts;
 
+use cli::Cli;
+use clap::Parser;
 use crate::error::GxxError;
-use crate::run::run_internal;
+use crate::run::run_cli;
 
 fn main() {
     // Ensure stdout encoding on Windows
@@ -19,20 +22,9 @@ fn main() {
         let _ = stdout().flush();
     }
 
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let cli = Cli::parse();
 
-    // Handle --db anywhere on the command line
-    let mut db_override = None;
-    if let Some(pos) = args.iter().position(|a| a == "--db") {
-        if pos + 1 >= args.len() {
-            eprintln!("error: --db needs a name");
-            std::process::exit(1);
-        }
-        db_override = Some(args[pos + 1].clone());
-        args.drain(pos..pos + 2);
-    }
-
-    let result = run_internal(args, db_override.as_deref());
+    let result = run_cli(cli);
 
     match result {
         Ok(()) => {}
