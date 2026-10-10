@@ -154,7 +154,10 @@ pub fn model_config_path() -> Result<PathBuf, GxxError> {
 mod tests {
     use super::*;
 
+    /// Skipped in CI: requires Piper model files that are not committed to git.
+    /// Run locally with: `cargo test -- --ignored`
     #[test]
+    #[ignore = "requires Piper model files in model/ (not in git, CI has no model)"]
     fn test_resolve_model_finds_cori() {
         // The model directory ships with en_GB-cori-high.onnx + .json
         let result = resolve_model();
@@ -166,7 +169,10 @@ mod tests {
         assert!(model.config_path.to_string_lossy().ends_with(".onnx.json"));
     }
 
+    /// Skipped in CI: requires Piper model files that are not committed to git.
+    /// Run locally with: `cargo test -- --ignored`
     #[test]
+    #[ignore = "requires Piper model files in model/ (not in git, CI has no model)"]
     fn test_load_config_valid() {
         let config_path = model_config_path().expect("model config should be found");
         let config = load_config(&config_path).expect("config should load");
