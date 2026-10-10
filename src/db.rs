@@ -279,6 +279,48 @@ pub fn search(con: &Connection, q: &str) -> Result<Vec<String>, GxxError> {
     Ok(matches.into_iter().map(|m| m.1).collect())
 }
 
+/// Search entries and return complete records as structured JSON values.
+/// Uses the same matching and ordering rules as `search()`.
+pub fn search_records(con: &Connection, q: &str) -> Result<Vec<Value>, GxxError> {
+    let ql = q.to_lowercase();
+    let nq = normalise(&ql);
+
+    let mut stmt = con.prepare("SELECT kind, data FROM entries")?;
+    let mut rows = stmt.query([])?;
+    let mut matches: Vec<(String, Value)> = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        let json_str: String = row.get(1)?;
+        let rec: Value = serde_json::from_str(&json_str)?;
+
+        let title = title_of(&rec);
+        let st = searchable(&rec);
+
+        let title_match = if ql.contains('*') {
+            glob_match(&nq, &normalise(&title))
+        } else {
+            normalise(&title).contains(&nq)
+        };
+        let text_match = if ql.contains('*') {
+            glob_match(&nq, &st)
+        } else {
+            st.contains(&nq)
+        };
+
+        if title_match || text_match {
+            matches.push((title, rec));
+        }
+    }
+
+    matches.sort_by(|a, b| {
+        let a_exact = key_of(&a.0) != ql;
+        let b_exact = key_of(&b.0) != ql;
+        a_exact.cmp(&b_exact).then_with(|| a.0.cmp(&b.0))
+    });
+
+    Ok(matches.into_iter().map(|(_, rec)| rec).collect())
+}
+
 /// Simple glob match: '*' matches any sequence, other chars literal.
 /// Applied to already-normalised strings.
 fn glob_match(pattern: &str, text: &str) -> bool {

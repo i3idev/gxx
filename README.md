@@ -12,6 +12,29 @@ cargo build --release
 
 The binary will be at `target/release/gxx`.
 
+### Optional Features
+
+#### Video Background
+
+The `video-background` feature enables a GStreamer-backed animated background (e.g. Minecraft gameplay video) behind the reading mode text. This feature is **disabled by default**.
+
+```bash
+# Build with video background support
+cargo build --release --features video-background
+
+# Run the main application GUI (Reading Mode is launched from within the app)
+gxx app
+```
+
+> **Note**: Building with `--features video-background` requires GStreamer development libraries on the system. On Debian/Ubuntu:
+> ```bash
+> sudo apt-get install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+> ```
+> On macOS:
+> ```bash
+> brew install gstreamer gst-plugins-base
+> ```
+
 ## Usage
 
 ```bash
@@ -48,6 +71,11 @@ gxx gram show <name>
 # Files
 gxx load <file.gxx>        # run a file of commands (one per line, # = comment)
 
+# Reading Mode (GUI)
+gxx app                     # launch reading mode GUI
+gxx -r <file.txt>           # open reading mode directly with a text file
+gxx --read <file.txt>       # alias for -r
+
 # Options
 --db <name>                # use another database for this command only
 ```
@@ -60,6 +88,7 @@ gxx load <file.gxx>        # run a file of commands (one per line, # = comment)
 - **Plain text output**: No colors, no emoji, ASCII-only layout
 - **Multiple databases**: `~/.gxx/db/<name>.db`, active DB in `~/.gxx/config`
 - **Underscores as spaces**: Multi-word items fit in one argument
+- **Optional GUI**: Slint-based reading mode with animated video background (feature-gated)
 
 ## Data Model
 

@@ -2,8 +2,7 @@
 /target/
 
 # Piper TTS models
-/model/*.onnx
-/model/*.onnx.json
+/model/
 
 # Generated audio/cache
 /audio/

@@ -1,4 +1,4 @@
-//! Word commands: add, show, find, list, del, pos, lvl, pron, def, note.
+//! Word commands: add, show, find, list, del, pos, lvl, pron, def, note, say.
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -11,6 +11,8 @@ use crate::model::{
     new_sense, new_word, senses_mut, title_of, STATE,
 };
 use crate::render::{render_entry, render_word_list};
+use crate::tts::model::{load_config, model_config_path};
+use crate::tts::{say_text, say_text_manual, PlaybackOptions};
 
 /// `gxx add <word> [translations...] [-p pos] [-l level]`
 pub fn cmd_add(con: &Connection, args: &[String]) -> Result<(), GxxError> {
@@ -479,7 +481,9 @@ pub fn cmd_family(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             let related = clean(&args[2]);
             let fam = family_mut(&mut rec);
             let len_before = fam.len();
-            fam.retain(|m| m.get("word").and_then(|v| v.as_str()).map(clean) != Some(related.clone()));
+            fam.retain(|m| {
+                m.get("word").and_then(|v| v.as_str()).map(clean) != Some(related.clone())
+            });
             if fam.len() == len_before {
                 return Err(GxxError::msg(format!(
                     "family member '{}' not found",
@@ -493,6 +497,157 @@ pub fn cmd_family(con: &Connection, args: &[String]) -> Result<(), GxxError> {
         }
         _ => return Err(GxxError::msg(format!("unknown family subcommand: {}", sub))),
     }
+    Ok(())
+}
+
+/// `gxx say <word> [--example N] [--repeat N] [--slow] [--very-slow] [--speed N] [--phonemes IPA] [--soft]`
+pub fn cmd_say(con: &Connection, args: &[String]) -> Result<(), GxxError> {
+    if args.is_empty() {
+        return Err(GxxError::msg(
+            "usage: gxx say <word> [--example N] [--repeat N] [--slow] [--very-slow] [--speed N] [--phonemes IPA] [--soft]",
+        ));
+    }
+
+    // Parse arguments
+    let mut example_num: Option<usize> = None;
+    let mut repeat: u32 = 1;
+    let mut speed: f32 = 1.0;
+    let mut volume: f32 = 1.0;
+    let mut manual_phonemes: Option<String> = None;
+
+    let mut positional = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        match a.as_str() {
+            "--example" => {
+                if i + 1 >= args.len() {
+                    return Err(GxxError::msg("--example requires a number"));
+                }
+                example_num = Some(
+                    args[i + 1]
+                        .parse()
+                        .map_err(|_| GxxError::msg("invalid example number"))?,
+                );
+                i += 2;
+            }
+            "--repeat" => {
+                if i + 1 >= args.len() {
+                    return Err(GxxError::msg("--repeat requires a number"));
+                }
+                repeat = args[i + 1]
+                    .parse()
+                    .map_err(|_| GxxError::msg("invalid repeat value"))?;
+                if repeat == 0 || repeat > 10 {
+                    return Err(GxxError::msg("repeat must be between 1 and 10"));
+                }
+                i += 2;
+            }
+            "--slow" => {
+                speed = 0.7;
+                i += 1;
+            }
+            "--very-slow" => {
+                speed = 0.5;
+                i += 1;
+            }
+            "--phonemes" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    GxxError::msg("--phonemes requires IPA, e.g. --phonemes \"dʒˈʌmps\"")
+                })?;
+
+                manual_phonemes = Some(value.clone());
+                i += 2;
+            }
+
+            "--speed" => {
+                let value = args
+                    .get(i + 1)
+                    .ok_or_else(|| GxxError::msg("--speed requires a value, e.g. --speed 0.7"))?;
+
+                speed = value.parse::<f32>().map_err(|_| {
+                    GxxError::msg(format!(
+                        "Invalid speed '{}'. Expected a number between 0.1 and 2.0",
+                        value
+                    ))
+                })?;
+
+                if !(0.1..=2.0).contains(&speed) {
+                    return Err(GxxError::msg(format!(
+                        "Invalid speed '{}'. Expected 0.1 <= speed <= 2.0",
+                        speed
+                    )));
+                }
+
+                i += 2;
+            }
+            "--soft" => {
+                volume = 0.6;
+                i += 1;
+            }
+            _ if a.starts_with("--") => {
+                return Err(GxxError::msg(format!("unknown option: {}", a)));
+            }
+            _ => {
+                positional.push(a.clone());
+                i += 1;
+            }
+        }
+    }
+
+    if positional.is_empty() {
+        return Err(GxxError::msg(
+            "usage: gxx say <word> [--example N] [--repeat N] [--slow] [--very-slow] [--speed N] [--phonemes IPA] [--soft]",
+        ));
+    }
+
+    let word_name = clean(&positional[0]);
+
+    // Load word record
+    let rec = load_rec_fallback(con, "word", &word_name)?;
+
+    // Determine text to speak
+    let text = if let Some(ex_num) = example_num {
+        let examples = rec.get("examples").and_then(|v| v.as_array());
+        match examples {
+            Some(exs) if ex_num > 0 && ex_num <= exs.len() => {
+                let ex = &exs[ex_num - 1];
+                ex.get("en")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| GxxError::msg("example has no English text"))?
+                    .to_string()
+            }
+            _ => return Err(GxxError::msg(format!("example #{} not found", ex_num))),
+        }
+    } else {
+        word_name.clone()
+    };
+
+    // Load TTS model config
+    let config_path = model_config_path()?;
+    let config = load_config(&config_path)?;
+
+    // Synthesize and play
+    let options = PlaybackOptions {
+        repeat,
+        speed,
+        volume,
+    };
+
+    if let Some(ipa) = manual_phonemes.as_deref() {
+        say_text_manual(ipa, &config, options, None)?;
+    } else {
+        say_text(&text, &config, options, None)?;
+    }
+
+    if !STATE.lock().unwrap().quiet {
+        if let Some(ex_num) = example_num {
+            println!("ok: played example #{}", ex_num);
+        } else {
+            println!("ok: played '{}'", word_name);
+        }
+    }
+
     Ok(())
 }
 

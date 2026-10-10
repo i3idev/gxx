@@ -6,6 +6,7 @@ mod error;
 mod model;
 mod render;
 mod run;
+mod tts;
 
 use crate::error::GxxError;
 use crate::run::run_internal;
