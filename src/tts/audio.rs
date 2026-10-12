@@ -46,16 +46,6 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
 
     let sr = sample_rate as usize;
 
-    // WSOLA parameters.
-    //
-    // 40 ms analysis frame:
-    //   large enough for speech waveform matching.
-    //
-    // 10 ms synthesis hop:
-    //   gives smooth overlap between frames.
-    //
-    // 8 ms search:
-    //   only searches around the expected analysis position.
     let frame_len = ((sr as f32) * 0.040).round() as usize;
     let synth_hop = ((sr as f32) * 0.010).round() as usize;
     let search_radius = ((sr as f32) * 0.008).round() as usize;
@@ -64,44 +54,31 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
         return Ok(samples.to_vec());
     }
 
-    // The analysis position moves according to the requested speed.
-    //
-    // 1.0 = normal
-    // 0.7 = 70% playback speed
-    // 0.5 = 50% playback speed
     let analysis_hop = ((synth_hop as f32) * speed).round().max(1.0) as usize;
-
     let overlap = frame_len - synth_hop;
 
-    // Hann window.
-    let window: Vec<f32> = (0..frame_len)
-        .map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / frame_len as f32).cos())
-        .collect();
+    let mut window = Vec::with_capacity(frame_len);
+    for i in 0..frame_len {
+        let v = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / frame_len as f32).cos();
+        window.push(v);
+    }
 
     let estimated_len = ((samples.len() as f32) / speed).ceil() as usize;
 
     let mut output = vec![0.0f32; estimated_len + frame_len];
     let mut weights = vec![0.0f32; estimated_len + frame_len];
 
-    // First frame.
     for i in 0..frame_len {
         let w = window[i];
-
         output[i] += samples[i] * w;
         weights[i] += w;
     }
 
     let mut previous_frame = samples[..frame_len].to_vec();
-
     let mut analysis_pos = 0usize;
     let mut output_pos = synth_hop;
 
     while output_pos + frame_len <= output.len() {
-        // IMPORTANT:
-        //
-        // The expected analysis position always advances from the
-        // previous expected position. The correlation search must
-        // NOT become the new timing clock.
         let expected = analysis_pos.saturating_add(analysis_hop);
 
         if expected + frame_len >= samples.len() {
@@ -113,8 +90,6 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
             .saturating_add(search_radius)
             .min(samples.len() - frame_len);
 
-        // Find the candidate that best matches the tail of the
-        // previous frame.
         let mut best_pos = expected;
         let mut best_score = f32::NEG_INFINITY;
 
@@ -144,7 +119,6 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
             }
         }
 
-        // Overlap-add.
         for i in 0..frame_len {
             let dst = output_pos + i;
 
@@ -153,21 +127,15 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
             }
 
             let w = window[i];
-
             output[dst] += samples[best_pos + i] * w;
             weights[dst] += w;
         }
 
         previous_frame.copy_from_slice(&samples[best_pos..best_pos + frame_len]);
-
-        // Timing clock advances by the expected amount,
-        // not by the correlation correction.
         analysis_pos += analysis_hop;
-
         output_pos += synth_hop;
     }
 
-    // Normalize overlap-add energy.
     for i in 0..output.len() {
         if weights[i] > 1.0e-6 {
             output[i] /= weights[i];
@@ -175,7 +143,6 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
     }
 
     output.truncate(estimated_len.min(output.len()));
-
     Ok(output)
 }
 
@@ -201,12 +168,10 @@ pub fn process_audio(
 ) -> Result<Vec<f32>, GxxError> {
     let mut result = samples.to_vec();
 
-    // Apply time-stretching first (pitch-preserving)
     if (speed - 1.0).abs() > f32::EPSILON {
         result = time_stretch(&result, speed, sample_rate)?;
     }
 
-    // Apply volume
     if (volume - 1.0).abs() > f32::EPSILON {
         result = apply_volume(&result, volume)?;
     }
@@ -265,9 +230,7 @@ mod tests {
         let samples = vec![0.0f32, 0.5, -0.5, 1.0, -1.0];
         let wav = write_wav(&samples, 22050).unwrap();
         assert!(!wav.is_empty());
-        // WAV header is at least 44 bytes
         assert!(wav.len() > 44);
-        // Check RIFF header
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
     }
@@ -283,7 +246,6 @@ mod tests {
     fn test_time_stretch_half_speed() {
         let samples = vec![0.0f32; 1000];
         let result = time_stretch(&samples, 0.5, 22050).unwrap();
-        // At half speed, output should be approximately double length
         assert!(result.len() > 1500);
     }
 
