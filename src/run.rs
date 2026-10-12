@@ -96,6 +96,8 @@ pub fn run_clap(
                         noise_scale: None,
                         out: None,
                         start: None,
+                        sentence_split: false,
+                        sentence_pause_ms: 150,
                     };
                     run_read(read_args, db_override)
                 }
@@ -468,24 +470,16 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
             .clone()
             .filter(|v| !v.eq_ignore_ascii_case("auto"));
 
-        // each paragraph may itself be language-segmented
-        let mut chunks: Vec<(String, String)> = Vec::new();
-        for para in paragraphs {
-            if auto_for_cfg {
-                let segs = crate::tts::phonemizer::segment_by_language(para);
-                chunks.extend(
-                    segs.into_iter()
-                        .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
-                        .map(|(t, l)| (t, l.to_string())),
-                );
-            } else if voice_for_cfg.is_some() {
-                chunks.push(((*para).to_string(), "voiced".to_string()));
-            } else {
-                chunks.push(((*para).to_string(), "active".to_string()));
-            }
-        }
+        let chunks = build_chunks(
+            paragraphs,
+            auto_for_cfg,
+            voice_for_cfg.as_deref(),
+            args.sentence_split,
+            args.sentence_pause_ms,
+            args.pause_ms,
+        );
 
-        render_chunks_to_wav(&chunks, out, args.pause_ms, |lang| {
+        render_chunks_to_wav(&chunks, out, |lang| {
             if auto_for_cfg {
                 try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
             } else if let Some(ref v) = voice_for_cfg {
@@ -506,6 +500,17 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
         volume: args.volume,
     };
 
+    let auto_mode = args.auto
+        || args
+            .voice
+            .as_deref()
+            .map(|v| v.eq_ignore_ascii_case("auto"))
+            .unwrap_or(false);
+    let voice_for_cfg = args
+        .voice
+        .clone()
+        .filter(|v| !v.eq_ignore_ascii_case("auto"));
+
     for (i, para) in paragraphs.iter().enumerate() {
         if stop_flag.load(Ordering::Acquire) {
             eprintln!("TTS: stopped at paragraph {}", start + i + 1);
@@ -514,49 +519,46 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
 
         eprintln!("TTS: paragraph {}/{}", start + i + 1, all_paragraphs.len());
 
-        let auto_mode = args.auto
-            || args
-                .voice
-                .as_deref()
-                .map(|v| v.eq_ignore_ascii_case("auto"))
-                .unwrap_or(false);
+        let para_ref = [*para];
+        let chunks = build_chunks(
+            &para_ref,
+            auto_mode,
+            voice_for_cfg.as_deref(),
+            args.sentence_split,
+            args.sentence_pause_ms,
+            0, // paragraph pause handled after this loop
+        );
 
-        if auto_mode {
-            let segments = crate::tts::phonemizer::segment_by_language(para);
-            let speakable: Vec<(String, &'static str)> = segments
-                .into_iter()
-                .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
-                .collect();
-            for (chunk, lang) in &speakable {
-                if stop_flag.load(Ordering::Acquire) {
-                    break;
+        for (chunk, lang, pause_before) in &chunks {
+            if stop_flag.load(Ordering::Acquire) {
+                break;
+            }
+            if *pause_before > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(*pause_before));
+            }
+            let config_opt = if auto_mode {
+                try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
+            } else if let Some(ref v) = voice_for_cfg {
+                try_load_config_for_voice(v, args.length_scale, args.noise_scale)
+            } else {
+                crate::tts::registry::get_active_config().ok()
+            };
+            match config_opt {
+                Some(config) => {
+                    crate::tts::say_text(
+                        chunk,
+                        &config,
+                        make_opts(),
+                        Some(Arc::clone(&stop_flag)),
+                    )?;
                 }
-                match try_load_config_for_voice(lang, args.length_scale, args.noise_scale) {
-                    Some(config) => {
-                        crate::tts::say_text(
-                            chunk,
-                            &config,
-                            make_opts(),
-                            Some(Arc::clone(&stop_flag)),
-                        )?;
-                    }
-                    None => {
-                        eprintln!(
-                            "TTS: warning: no model for '{}', skipping segment {:?}",
-                            lang, chunk
-                        );
-                    }
+                None => {
+                    eprintln!(
+                        "TTS: warning: no model for '{}', skipping segment {:?}",
+                        lang, chunk
+                    );
                 }
             }
-        } else if let Some(voice) = args
-            .voice
-            .as_deref()
-            .filter(|v| !v.eq_ignore_ascii_case("auto"))
-        {
-            let config = load_config_for_voice(voice, args.length_scale, args.noise_scale)?;
-            crate::tts::say_text(para, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
-        } else {
-            crate::tts::say_with_active_model(para, make_opts(), Some(Arc::clone(&stop_flag)))?;
         }
 
         if i + 1 < total && args.pause_ms > 0 {
@@ -591,16 +593,14 @@ fn print_voice_list() -> Result<(), GxxError> {
     Ok(())
 }
 
-/// Render a list of pre-split (text, config) chunks into a single WAV file.
+/// Render chunks to a single WAV file.
 ///
-/// - Synthesizes each chunk without playing.
-/// - Inserts `pause_ms` silence between chunks.
-/// - Errors if two chunks have different sample rates.
-/// - `config_for` decides which model to use per chunk (returns None to skip).
+/// Each chunk is `(text, lang, pause_before_ms)`; `pause_before_ms` is
+/// the silence inserted before that chunk. Chunks are synthesized
+/// sequentially without playing, and `config_for` picks the model.
 fn render_chunks_to_wav<F>(
-    chunks: &[(String, String)],
+    chunks: &[(String, String, u64)],
     out: &std::path::Path,
-    pause_ms: u64,
     config_for: F,
 ) -> Result<usize, GxxError>
 where
@@ -612,7 +612,7 @@ where
     let mut sample_rate: Option<u32> = None;
     let mut spoken = 0usize;
 
-    for (chunk, lang) in chunks {
+    for (chunk, lang, pause_before) in chunks {
         let config = match config_for(lang.as_str()) {
             Some(c) => c,
             None => {
@@ -634,11 +634,12 @@ where
             }
             _ => {}
         }
-        let samples = crate::tts::synthesize_text(chunk, &config)?;
-        if spoken > 0 && pause_ms > 0 {
-            let silence_len = (rate as u64 * pause_ms / 1000) as usize;
+        // silence before this chunk
+        if spoken > 0 && *pause_before > 0 {
+            let silence_len = (rate as u64 * *pause_before / 1000) as usize;
             all_samples.extend(std::iter::repeat_n(0.0f32, silence_len));
         }
+        let samples = crate::tts::synthesize_text(chunk, &config)?;
         all_samples.extend(samples);
         spoken += 1;
     }
@@ -654,6 +655,68 @@ where
         rate
     );
     Ok(spoken)
+}
+
+/// Build `(text, lang, pause_before_ms)` chunks from paragraphs.
+///
+/// - Splits each paragraph into sentences when `sentence_split` is true.
+/// - Optionally language-segments each unit when `auto` is true.
+/// - `pause_before_ms` reflects the boundary before the chunk:
+///   * 0 for the very first chunk and for language sub-segments,
+///   * `sentence_pause_ms` between sentences within a paragraph,
+///   * `paragraph_pause_ms` between paragraphs.
+fn build_chunks(
+    paragraphs: &[&str],
+    auto: bool,
+    voice_label: Option<&str>,
+    sentence_split: bool,
+    sentence_pause_ms: u64,
+    paragraph_pause_ms: u64,
+) -> Vec<(String, String, u64)> {
+    let mut chunks: Vec<(String, String, u64)> = Vec::new();
+
+    for (pi, para) in paragraphs.iter().enumerate() {
+        let units: Vec<String> = if sentence_split {
+            crate::tts::phonemizer::split_sentences(para)
+        } else {
+            vec![(*para).to_string()]
+        };
+
+        for (ui, unit) in units.iter().enumerate() {
+            let at_start = pi == 0 && ui == 0;
+
+            if auto {
+                let segs = crate::tts::phonemizer::segment_by_language(unit);
+                let speakable: Vec<(String, String)> = segs
+                    .into_iter()
+                    .filter(|(t, l)| *l != "neutral" && !t.trim().is_empty())
+                    .map(|(t, l)| (t, l.to_string()))
+                    .collect();
+                for (si, (t, l)) in speakable.into_iter().enumerate() {
+                    let pause = if at_start || si > 0 {
+                        0
+                    } else if ui > 0 {
+                        sentence_pause_ms
+                    } else {
+                        paragraph_pause_ms
+                    };
+                    chunks.push((t, l, pause));
+                }
+            } else {
+                let lang = voice_label.unwrap_or("active").to_string();
+                let pause = if at_start {
+                    0
+                } else if ui > 0 {
+                    sentence_pause_ms
+                } else {
+                    paragraph_pause_ms
+                };
+                chunks.push((unit.clone(), lang, pause));
+            }
+        }
+    }
+
+    chunks
 }
 
 fn run_paragraph(
@@ -685,31 +748,31 @@ fn run_paragraph(
                 .as_deref()
                 .map(|v| v.eq_ignore_ascii_case("auto"))
                 .unwrap_or(false);
-
-        let chunks: Vec<(String, String)> = if auto_mode {
-            let segs = crate::tts::phonemizer::segment_by_language(&text);
-            segs.into_iter()
-                .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
-                .map(|(t, l)| (t, l.to_string()))
-                .collect()
-        } else if let Some(v) = args
-            .voice
-            .as_deref()
-            .filter(|v| !v.eq_ignore_ascii_case("auto"))
-        {
-            vec![(text.clone(), v.to_string())]
-        } else {
-            // use active model
-            vec![(text.clone(), "active".to_string())]
-        };
-
-        let auto_for_cfg = auto_mode;
         let voice_for_cfg = args
             .voice
             .clone()
             .filter(|v| !v.eq_ignore_ascii_case("auto"));
-        render_chunks_to_wav(&chunks, out, args.paragraph_pause_ms, |lang| {
-            if auto_for_cfg {
+
+        let paragraphs: Vec<&str> = text
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if paragraphs.is_empty() {
+            return Err(GxxError::msg("no text to speak"));
+        }
+
+        let chunks = build_chunks(
+            &paragraphs,
+            auto_mode,
+            voice_for_cfg.as_deref(),
+            args.sentence_split,
+            args.sentence_pause_ms,
+            args.paragraph_pause_ms,
+        );
+
+        render_chunks_to_wav(&chunks, out, |lang| {
+            if auto_mode {
                 try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
             } else if let Some(ref v) = voice_for_cfg {
                 try_load_config_for_voice(v, args.length_scale, args.noise_scale)
@@ -734,6 +797,51 @@ fn run_paragraph(
             .as_deref()
             .map(|v| v.eq_ignore_ascii_case("auto"))
             .unwrap_or(false);
+
+    // 1b) sentence-split path (play): split into sentences, pause between
+    if args.sentence_split {
+        let paragraphs: Vec<&str> = text
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        let voice_for_cfg = args
+            .voice
+            .clone()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"));
+        let chunks = build_chunks(
+            &paragraphs,
+            auto_mode,
+            voice_for_cfg.as_deref(),
+            true,
+            args.sentence_pause_ms,
+            args.paragraph_pause_ms,
+        );
+        for (chunk, lang, pause_before) in &chunks {
+            if *pause_before > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(*pause_before));
+            }
+            let config_opt = if auto_mode {
+                try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
+            } else if let Some(ref v) = voice_for_cfg {
+                try_load_config_for_voice(v, args.length_scale, args.noise_scale)
+            } else {
+                crate::tts::registry::get_active_config().ok()
+            };
+            match config_opt {
+                Some(config) => {
+                    crate::tts::say_text(chunk, &config, make_opts(), None)?;
+                }
+                None => {
+                    eprintln!(
+                        "TTS: warning: no model for '{}', skipping segment {:?}",
+                        lang, chunk
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
 
     // 2a) manual IPA path: skip eSpeak and language guard
     if let Some(ipa) = args.phonemes {

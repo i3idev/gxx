@@ -485,9 +485,76 @@ pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
     segments
 }
 
+/// Split text into sentences on `.!?` (ASCII and fullwidth) and Persian `؟`.
+///
+/// Consecutive terminators (e.g. `...`) are kept together. Whitespace-only
+/// or punctuation-only runs are discarded.
+pub fn split_sentences(text: &str) -> Vec<String> {
+    fn is_terminator(c: char) -> bool {
+        matches!(
+            c,
+            '.' | '!' | '?' | '\u{061F}' | '\u{3002}' | '\u{FF01}' | '\u{FF1F}' | '\u{2026}'
+        )
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut buf = String::new();
+
+    let flush = |buf: &mut String, out: &mut Vec<String>| {
+        let trimmed = buf.trim();
+        if !trimmed.is_empty() && trimmed.chars().any(|c| c.is_alphanumeric()) {
+            out.push(trimmed.to_string());
+        }
+        buf.clear();
+    };
+
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        buf.push(c);
+        if is_terminator(c) {
+            // Only flush at the end of a run of terminators (e.g. "...", "?!").
+            let next_is_terminator = chars.peek().map(|n| is_terminator(*n)).unwrap_or(false);
+            if !next_is_terminator {
+                flush(&mut buf, &mut out);
+            }
+        }
+    }
+    flush(&mut buf, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    #[test]
+    fn test_split_sentences_basic() {
+        assert_eq!(
+            split_sentences("Hello. World! How are you?"),
+            vec!["Hello.", "World!", "How are you?"]
+        );
+    }
+
+    #[test]
+    fn test_split_sentences_persian() {
+        assert_eq!(
+            split_sentences("سلام. چطوری؟ خوبم."),
+            vec!["سلام.", "چطوری؟", "خوبم."]
+        );
+    }
+
+    #[test]
+    fn test_split_sentences_ellipsis() {
+        let r = split_sentences("Wait... what?");
+        assert_eq!(r, vec!["Wait...", "what?"]);
+    }
+
+    #[test]
+    fn test_split_sentences_empty() {
+        assert!(split_sentences("").is_empty());
+        assert!(split_sentences("   ").is_empty());
+        assert!(split_sentences("... !!!").is_empty());
+    }
 
     #[test]
     fn test_detect_language_fa() {

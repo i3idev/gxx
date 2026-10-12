@@ -379,6 +379,14 @@ pub struct ReadArgs {
     /// Start from paragraph N (1-based)
     #[arg(long, value_name = "N")]
     pub start: Option<usize>,
+
+    /// Split paragraphs into sentences and pause between them
+    #[arg(long)]
+    pub sentence_split: bool,
+
+    /// Pause between sentences when --sentence-split is used (ms)
+    #[arg(long, value_name = "MS", default_value_t = 150)]
+    pub sentence_pause_ms: u64,
 }
 
 #[derive(Args, Debug)]
@@ -433,6 +441,14 @@ pub struct ParagraphArgs {
     /// List available voices and exit
     #[arg(long)]
     pub list_voices: bool,
+
+    /// Split paragraphs into sentences and pause between them
+    #[arg(long)]
+    pub sentence_split: bool,
+
+    /// Pause between sentences when --sentence-split is used (ms)
+    #[arg(long, value_name = "MS", default_value_t = 150)]
+    pub sentence_pause_ms: u64,
 }
 
 #[derive(Args, Debug)]
