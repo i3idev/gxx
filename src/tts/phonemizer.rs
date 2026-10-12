@@ -16,11 +16,9 @@ fn get_data_dir() -> Result<PathBuf, GxxError> {
         .join("gxx")
         .join("espeak-ng-data");
 
-    // Create directory if it doesn't exist
     std::fs::create_dir_all(&data_dir)
         .map_err(|e| GxxError::msg(format!("Failed to create data directory: {}", e)))?;
 
-    // Install bundled data if not already present
     if !data_dir.join("en_dict").exists() {
         install_bundled_data(&data_dir).map_err(|e| {
             GxxError::msg(format!("Failed to install bundled espeak-ng data: {}", e))
@@ -61,7 +59,6 @@ fn split_ipa_to_symbols(
     let mut i = 0;
 
     while i < chars.len() {
-        // Piper has an explicit space token. Preserve word boundaries.
         if chars[i].is_whitespace() {
             if phoneme_id_map.contains_key(" ") {
                 symbols.push(" ".to_string());
@@ -71,29 +68,32 @@ fn split_ipa_to_symbols(
         }
 
         let mut matched = false;
+        let mut best_len = 0usize;
+        let mut best_symbol = None;
 
-        // IPA symbols in Piper's map may be multi-character sequences.
-        // Use longest-match first, based on the actual model map.
         for len in (1..=4).rev() {
             if i + len > chars.len() {
                 continue;
             }
 
             let candidate: String = chars[i..i + len].iter().collect();
-
             if phoneme_id_map.contains_key(&candidate) {
-                symbols.push(candidate);
-                i += len;
-                matched = true;
+                best_len = len;
+                best_symbol = Some(candidate);
                 break;
             }
+        }
+
+        if let Some(candidate) = best_symbol {
+            symbols.push(candidate);
+            i += best_len;
+            matched = true;
         }
 
         if !matched {
             let context_start = i.saturating_sub(3);
             let context_end = (i + 4).min(chars.len());
             let context: String = chars[context_start..context_end].iter().collect();
-
             return Err(GxxError::msg(format!(
                 "eSpeak emitted IPA symbol not present in Piper phoneme_id_map: {:?} near {:?}",
                 chars[i], context
@@ -106,11 +106,6 @@ fn split_ipa_to_symbols(
 
 /// Phonemize text using eSpeak NG.
 /// Returns a vector of phoneme IDs matching the Piper model's phoneme_id_map.
-///
-/// Convert manually supplied IPA directly into Piper phoneme IDs.
-///
-/// Unlike `phonemize()`, this does NOT call eSpeak.
-/// The caller controls the exact IPA sequence.
 pub fn phonemize_manual(
     ipa: &str,
     phoneme_id_map: &std::collections::HashMap<String, Vec<u32>>,
@@ -125,7 +120,6 @@ pub fn phonemize_manual(
 
     let mut ids = Vec::new();
 
-    // Piper normally expects BOS/EOS around the phoneme sequence.
     if let Some(bos) = phoneme_id_map.get("^") {
         ids.extend(bos);
     }
@@ -149,22 +143,12 @@ pub fn phonemize_manual(
 }
 
 /// Split IPA using longest-match-first.
-///
-/// This is important for multi-character IPA symbols such as:
-/// dʒ, tʃ, aɪ, eɪ, oʊ, etc.
+const MULTI: &[&str] = &[
+    "aɪ", "aʊ", "eɪ", "oʊ", "ɔɪ", "ɪə", "eə", "ʊə", "iː", "uː", "ɑː", "ɔː", "ɜː",
+    "t̪", "d̪", "n̪",
+];
+
 fn split_ipa_symbols(ipa: &str) -> Vec<String> {
-    // Piper Ryan does not expose dʒ/tʃ as single phoneme-map keys.
-    // Expand them to the component symbols:
-    //
-    //   dʒ -> d + ʒ
-    //   tʃ -> t + ʃ
-    //
-    // Other multi-character IPA symbols remain intact.
-
-    const MULTI: &[&str] = &[
-        "aɪ", "aʊ", "eɪ", "oʊ", "ɔɪ", "ɪə", "eə", "ʊə", "iː", "uː", "ɑː", "ɔː", "ɜː", "t̪", "d̪", "n̪",
-    ];
-
     let chars: Vec<char> = ipa.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -175,7 +159,6 @@ fn split_ipa_symbols(ipa: &str) -> Vec<String> {
             continue;
         }
 
-        // Model-level representation of affricates.
         if i + 1 < chars.len() {
             match (chars[i], chars[i + 1]) {
                 ('d', 'ʒ') => {
@@ -184,24 +167,19 @@ fn split_ipa_symbols(ipa: &str) -> Vec<String> {
                     i += 2;
                     continue;
                 }
-
                 ('t', 'ʃ') => {
                     out.push("t".to_string());
                     out.push("ʃ".to_string());
                     i += 2;
                     continue;
                 }
-
                 _ => {}
             }
         }
 
-        // Longest-match-first for the remaining multi-character symbols.
         let mut matched: Option<&str> = None;
-
         for candidate in MULTI {
             let candidate_chars: Vec<char> = candidate.chars().collect();
-
             if i + candidate_chars.len() <= chars.len()
                 && chars[i..i + candidate_chars.len()] == candidate_chars[..]
             {
@@ -260,7 +238,6 @@ fn strip_language_tags(s: &str) -> String {
 }
 
 pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u32>, GxxError> {
-    // Reject text whose language doesn't match the voice's language.
     let text_lang = detect_language(text);
     if !matches!(text_lang, "mixed" | "unknown") {
         let voice_lang = if voice.starts_with("fa") || voice.starts_with("per") {
@@ -309,9 +286,6 @@ pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u3
         .ok_or_else(|| GxxError::msg("Missing EOS '$' in phoneme_id_map"))?;
 
     let mut ids = Vec::new();
-
-    // Piper 0.2.x input:
-    // BOS + (phoneme + PAD) + ... + EOS
     ids.extend(bos.iter().copied());
 
     for symbol in symbols {
@@ -323,8 +297,6 @@ pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u3
         })?;
 
         ids.extend(id_vec.iter().copied());
-
-        // Piper intersperses PAD between every phoneme.
         ids.extend(pad.iter().copied());
     }
 
@@ -345,13 +317,10 @@ pub fn phonemes_to_ids(
         if let Some(id_vec) = phoneme_id_map.get(phoneme) {
             ids.extend(id_vec.iter().copied());
         } else {
-            // Try to handle unknown phonemes gracefully
-            // Log a warning but continue with a fallback (space/unknown token)
             eprintln!(
                 "Warning: phoneme '{}' not found in phoneme_id_map, skipping",
                 phoneme
             );
-            // Use space token (ID 3) as fallback
             if let Some(space_ids) = phoneme_id_map.get(" ") {
                 ids.extend(space_ids.iter().copied());
             }
@@ -397,14 +366,12 @@ mod tests {
             ("$", &[5]),
         ]);
         let ids = phonemize_manual("a b", &map).unwrap();
-        // split_ipa_symbols skips whitespace, so BOS + a + b + EOS
         assert_eq!(ids, vec![1, 2, 4, 5]);
     }
 
     #[test]
     fn test_phonemize_manual_unknown_symbol() {
         let map = make_map(&[("^", &[1]), ("a", &[2]), ("$", &[3])]);
-        // 'b' is not in the map
         assert!(phonemize_manual("ab", &map).is_err());
     }
 
@@ -431,12 +398,6 @@ mod tests {
 }
 
 /// Split text into contiguous language segments.
-///
-/// Each segment is `(text_slice, lang)` where `lang` is `"fa"`, `"en"`, or
-/// `"neutral"` for runs with no alphabetic characters. Neutral runs are
-/// merged into the previous segment when possible.
-///
-/// Returns an empty vector for empty input.
 pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
     fn char_lang(c: char) -> &'static str {
         if !c.is_alphabetic() {
@@ -456,8 +417,8 @@ pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
         }
     }
 
-    let mut segments: Vec<(String, &'static str)> = Vec::new();
-    let mut buf = String::new();
+    let mut segments: Vec<(String, &'static str)> = Vec::with_capacity(4);
+    let mut buf = String::with_capacity(text.len());
     let mut buf_lang = "neutral";
 
     for c in text.chars() {
@@ -465,11 +426,9 @@ pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
         if cl == "neutral" || cl == buf_lang {
             buf.push(c);
         } else if buf_lang == "neutral" {
-            // upgrade neutral buffer to current lang
             buf.push(c);
             buf_lang = cl;
         } else {
-            // flush current buffer, start new one
             segments.push((buf.clone(), buf_lang));
             buf.clear();
             buf.push(c);
