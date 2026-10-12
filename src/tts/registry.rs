@@ -463,9 +463,18 @@ mod tests {
 
     #[test]
     fn test_discover_models() {
+        // `model/` is gitignored, so CI has no model files. Discovery
+        // must not error; content assertions only run when a model
+        // happens to be present (developer machines).
         let registry = ModelRegistry::discover().unwrap();
-        // Should find at least the models we know about
-        assert!(!registry.is_empty(), "Should discover at least one model");
+        if registry.is_empty() {
+            eprintln!("no models present (CI); skipping content assertions");
+            return;
+        }
+        let m = registry.all()[0];
+        assert!(!m.id.is_empty(), "model id must not be empty");
+        assert_ne!(m.language, "unknown", "language must be parsed");
+        assert_ne!(m.voice, "unknown", "voice must be parsed");
     }
 
     #[test]
