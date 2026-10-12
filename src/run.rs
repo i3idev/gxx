@@ -612,7 +612,7 @@ where
         let samples = crate::tts::synthesize_text(chunk, &config)?;
         if spoken > 0 && pause_ms > 0 {
             let silence_len = (rate as u64 * pause_ms / 1000) as usize;
-            all_samples.extend(std::iter::repeat(0.0f32).take(silence_len));
+            all_samples.extend(std::iter::repeat_n(0.0f32, silence_len));
         }
         all_samples.extend(samples);
         spoken += 1;
