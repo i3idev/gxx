@@ -288,6 +288,7 @@ pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u3
         .map_err(|e| GxxError::msg(format!("Phonemization failed: {}", e)))?;
 
     let phonemes = strip_language_tags(&phonemes);
+    let phonemes = stretch_long_vowels(&phonemes, config.vowel_stretch);
     let symbols = split_ipa_to_symbols(&phonemes, &config.phoneme_id_map)?;
 
     eprintln!("TTS: eSpeak IPA = {:?}", phonemes);
@@ -523,6 +524,25 @@ pub fn split_sentences(text: &str) -> Vec<String> {
     out
 }
 
+/// Add `extra` more `ː` marks after each existing `ː` in the IPA.
+/// Long vowels (`ɑː`, `iː`, `uː`, ...) become longer without touching
+/// short vowels.
+pub fn stretch_long_vowels(ipa: &str, extra: u32) -> String {
+    if extra == 0 {
+        return ipa.to_string();
+    }
+    let mut out = String::with_capacity(ipa.len() + extra as usize * 4);
+    for c in ipa.chars() {
+        out.push(c);
+        if c == '\u{02D0}' {
+            for _ in 0..extra {
+                out.push('\u{02D0}');
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod language_tests {
     use super::*;
@@ -554,6 +574,28 @@ mod language_tests {
         assert!(split_sentences("").is_empty());
         assert!(split_sentences("   ").is_empty());
         assert!(split_sentences("... !!!").is_empty());
+    }
+
+    #[test]
+    fn test_stretch_noop() {
+        assert_eq!(stretch_long_vowels("zabɑːn", 0), "zabɑːn");
+        assert_eq!(stretch_long_vowels("", 3), "");
+    }
+
+    #[test]
+    fn test_stretch_adds_marks() {
+        assert_eq!(stretch_long_vowels("zabɑːn", 1), "zabɑːːn");
+        assert_eq!(stretch_long_vowels("zabɑːn", 2), "zabɑːːːn");
+    }
+
+    #[test]
+    fn test_stretch_short_untouched() {
+        assert_eq!(stretch_long_vowels("salɑm", 2), "salɑm");
+    }
+
+    #[test]
+    fn test_stretch_mixed() {
+        assert_eq!(stretch_long_vowels("iːn salɑm ɑːst", 1), "iːːn salɑm ɑːːst");
     }
 
     #[test]

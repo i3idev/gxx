@@ -32,6 +32,10 @@ pub struct PiperConfig {
     /// Not serialized to/from JSON.
     #[serde(default, skip)]
     pub onnx_path: Option<std::path::PathBuf>,
+
+    /// Runtime-only: extra `ː` marks added after each existing one.
+    #[serde(default, skip)]
+    pub vowel_stretch: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]

@@ -372,6 +372,10 @@ pub struct ReadArgs {
     #[arg(long, value_name = "F32")]
     pub noise_scale: Option<f32>,
 
+    /// Extra ː marks after each long vowel (0-3, higher = more stretched)
+    #[arg(long, value_name = "N")]
+    pub vowel_stretch: Option<u32>,
+
     /// Write output to a WAV file instead of playing
     #[arg(long, value_name = "PATH")]
     pub out: Option<std::path::PathBuf>,
@@ -445,6 +449,10 @@ pub struct ParagraphArgs {
     /// Override Piper noise_scale (lower = flatter prosody)
     #[arg(long, value_name = "F32")]
     pub noise_scale: Option<f32>,
+
+    /// Extra ː marks after each long vowel (0-3, higher = more stretched)
+    #[arg(long, value_name = "N")]
+    pub vowel_stretch: Option<u32>,
 
     /// Write output to a WAV file instead of playing
     #[arg(long, value_name = "PATH")]

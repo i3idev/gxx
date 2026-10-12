@@ -36,6 +36,10 @@ pub fn cache_key(text: &str, config: &PiperConfig) -> String {
     config.inference.noise_scale.to_bits().hash(&mut hasher);
     config.inference.length_scale.to_bits().hash(&mut hasher);
     config.inference.noise_w.to_bits().hash(&mut hasher);
+    if let Some(ref p) = config.onnx_path {
+        p.hash(&mut hasher);
+    }
+    config.vowel_stretch.hash(&mut hasher);
     // Include phoneme_id_map hash for robustness
     let mut phoneme_keys: Vec<_> = config.phoneme_id_map.keys().collect();
     phoneme_keys.sort();
