@@ -23,6 +23,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub quiet: bool,
 
+    /// Disable ANSI colors in output
+    #[arg(long, global = true)]
+    pub no_color: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -84,6 +88,9 @@ pub enum Command {
     /// TTS model management
     #[command(subcommand)]
     Model(ModelCommand),
+
+    /// Extended help topics (tts, models, language, bookmarks, examples)
+    Topics(TopicsArgs),
 
     /// Set/get part of speech
     Pos(FieldArgs),
@@ -489,6 +496,12 @@ pub struct ParagraphArgs {
     /// Forget saved progress for this file and exit
     #[arg(long)]
     pub clear_progress: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct TopicsArgs {
+    /// Topic name (omit to list all topics)
+    pub topic: Option<String>,
 }
 
 #[derive(Args, Debug)]

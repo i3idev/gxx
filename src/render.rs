@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::model::{label, lang_of, title_of};
+use crate::style;
 
 /// Format example lines exactly like Python.
 /// Output:
@@ -20,7 +21,7 @@ pub fn ex_lines(examples: &[Value]) -> String {
     if examples.is_empty() {
         return "no examples".to_string();
     }
-    let mut out = vec![format!("EXAMPLES ({})", examples.len())];
+    let mut out = vec![style::header(&format!("EXAMPLES ({})", examples.len()))];
     for (i, ex) in examples.iter().enumerate() {
         let en = ex.get("en").and_then(|v| v.as_str()).unwrap_or("[no en]");
         let fa = ex.get("fa").and_then(|v| v.as_str()).unwrap_or("[no fa]");
@@ -42,11 +43,14 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
     let mut b = std::collections::BTreeMap::new();
     if kind == "word" {
         if let Some(def) = rec.get("def").and_then(|v| v.as_str()) {
-            b.insert("def".into(), vec![format!("DEF : {}", def)]);
+            b.insert(
+                "def".into(),
+                vec![format!("{} : {}", style::key("DEF"), def)],
+            );
         }
         if let Some(map) = rec.get("translations").and_then(|v| v.as_object()) {
             if !map.is_empty() {
-                let mut tr_lines = vec!["TRANSLATIONS".to_string()];
+                let mut tr_lines = vec![style::header("TRANSLATIONS")];
                 for (lang, vals) in map {
                     if let Some(arr) = vals.as_array() {
                         let joined: Vec<String> = arr
@@ -54,7 +58,7 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
                             .filter_map(|x| x.as_str().map(|s| s.to_string()))
                             .collect();
                         if !joined.is_empty() {
-                            tr_lines.push(format!(" {} : {}", lang, joined.join(", ")));
+                            tr_lines.push(format!(" {} : {}", style::key(lang), joined.join(", ")));
                         }
                     }
                 }
@@ -71,7 +75,7 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
             if !syns.is_empty() {
                 b.insert(
                     "syn".into(),
-                    vec![format!("SYNONYMS : {}", syns.join(", "))],
+                    vec![format!("{} : {}", style::key("SYNONYMS"), syns.join(", "))],
                 );
             }
         }
@@ -83,14 +87,14 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
             if !ants.is_empty() {
                 b.insert(
                     "ant".into(),
-                    vec![format!("ANTONYMS : {}", ants.join(", "))],
+                    vec![format!("{} : {}", style::key("ANTONYMS"), ants.join(", "))],
                 );
             }
         }
         // Senses
         if let Some(arr) = rec.get("senses").and_then(|v| v.as_array()) {
             if !arr.is_empty() {
-                let mut sense_lines = vec!["SENSES".to_string()];
+                let mut sense_lines = vec![style::header("SENSES")];
                 for (i, s) in arr.iter().enumerate() {
                     if let Some(def) = s.get("def").and_then(|v| v.as_str()) {
                         sense_lines.push(format!(" {}> {}", i + 1, def));
@@ -121,7 +125,7 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
         // Collocations
         if let Some(arr) = rec.get("collocations").and_then(|v| v.as_array()) {
             if !arr.is_empty() {
-                let mut coll_lines = vec!["COLLOCATIONS".to_string()];
+                let mut coll_lines = vec![style::header("COLLOCATIONS")];
                 for (i, c) in arr.iter().enumerate() {
                     if let Some(text) = c.as_str() {
                         coll_lines.push(format!(" {}> {}", i + 1, text));
@@ -133,7 +137,7 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
         // Word Family
         if let Some(arr) = rec.get("family").and_then(|v| v.as_array()) {
             if !arr.is_empty() {
-                let mut fam_lines = vec!["WORD FAMILY".to_string()];
+                let mut fam_lines = vec![style::header("WORD FAMILY")];
                 for m in arr {
                     if let Some(word) = m.get("word").and_then(|v| v.as_str()) {
                         let mut line = format!(" {}> {}", word, "");
@@ -150,14 +154,20 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
         }
     } else {
         if let Some(rule) = rec.get("rule").and_then(|v| v.as_str()) {
-            b.insert("rule".into(), vec![format!("RULE : {}", rule)]);
+            b.insert(
+                "rule".into(),
+                vec![format!("{} : {}", style::key("RULE"), rule)],
+            );
         }
         if let Some(desc) = rec.get("desc").and_then(|v| v.as_str()) {
-            b.insert("desc".into(), vec![format!("DESC : {}", desc)]);
+            b.insert(
+                "desc".into(),
+                vec![format!("{} : {}", style::key("DESC"), desc)],
+            );
         }
         if let Some(arr) = rec.get("errors").and_then(|v| v.as_array()) {
             if !arr.is_empty() {
-                let mut err_lines = vec![format!("ERRORS ({})", arr.len())];
+                let mut err_lines = vec![style::header(&format!("ERRORS ({})", arr.len()))];
                 for (i, e) in arr.iter().enumerate() {
                     if let Some(t) = e.as_str() {
                         err_lines.push(format!(" {}> {}", i + 1, t));
@@ -176,7 +186,10 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
         }
     }
     let notes = rec.get("notes").and_then(|v| v.as_str()).unwrap_or("-");
-    b.insert("note".into(), vec![format!("NOTES : {}", notes)]);
+    b.insert(
+        "note".into(),
+        vec![format!("{} : {}", style::key("NOTES"), notes)],
+    );
     b
 }
 
@@ -250,7 +263,7 @@ pub fn render_entry(kind: &str, rec: &Value, sections: &[String]) -> String {
 
     if !sections.is_empty() {
         // Sectioned output: title only, then requested blocks
-        lines.push(title_of(rec));
+        lines.push(style::header(&title_of(rec)));
         for group in &order {
             for k in group {
                 if sections.iter().any(|s| s == k) {
@@ -264,9 +277,9 @@ pub fn render_entry(kind: &str, rec: &Value, sections: &[String]) -> String {
     }
 
     // Full output
-    let bar = "=".repeat(48);
+    let bar = style::dim(&"=".repeat(48));
     lines.push(bar.clone());
-    lines.push(header(kind, rec));
+    lines.push(style::header(&header(kind, rec)));
     lines.push(bar.clone());
 
     for group in &order {
@@ -290,7 +303,10 @@ pub fn render_entry(kind: &str, rec: &Value, sections: &[String]) -> String {
     let created = &created[..created.len().min(10)];
     let updated = &updated[..updated.len().min(10)];
     lines.push(String::new());
-    lines.push(format!("CREATED: {}  UPDATED: {}", created, updated));
+    lines.push(style::dim(&format!(
+        "CREATED: {}  UPDATED: {}",
+        created, updated
+    )));
     lines.push(bar);
 
     lines.join("\n")
@@ -351,10 +367,15 @@ pub fn render_db_info(
 ) -> Vec<String> {
     let mut out = Vec::new();
     let active_suffix = if is_active { "  (active)" } else { "" };
-    out.push(format!("name : {}{}", name, active_suffix));
-    out.push(format!("path : {}", path.display()));
+    out.push(format!(
+        "{} : {}{}",
+        style::key("name"),
+        name,
+        active_suffix
+    ));
+    out.push(format!("{} : {}", style::key("path"), path.display()));
     for (kind, count) in counts {
-        out.push(format!("{:<6}: {}", label(kind), count));
+        out.push(format!("{:<6}: {}", style::key(label(kind)), count));
     }
     out
 }

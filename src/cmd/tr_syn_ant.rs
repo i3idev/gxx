@@ -126,7 +126,11 @@ pub fn cmd_syn_ant(con: &Connection, field: &str, args: &[String]) -> Result<(),
             .map(|s| s.to_string())
             .collect();
         let joined = vals.join(", ");
-        println!("ok: {}", if joined.is_empty() { "-" } else { &joined });
+        println!(
+            "{} {}",
+            crate::style::ok("ok:"),
+            if joined.is_empty() { "-" } else { &joined }
+        );
     }
     Ok(())
 }

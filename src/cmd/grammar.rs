@@ -100,7 +100,7 @@ pub fn cmd_gdel(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
         [crate::model::entry_id(kind, &args[0])],
     )?;
     if !crate::model::STATE.lock().unwrap().quiet {
-        println!("deleted: {}", clean(&args[0]));
+        println!("{}: {}", crate::style::warn("deleted"), clean(&args[0]));
     }
     Ok(())
 }
@@ -146,7 +146,7 @@ pub fn cmd_gerr(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
             save_rec(con, kind, &mut rec)?;
             if !crate::model::STATE.lock().unwrap().quiet {
                 let errs = rec["errors"].as_array().unwrap();
-                println!("ok: {} error(s)", errs.len());
+                println!("{} {} error(s)", crate::style::ok("ok:"), errs.len());
             }
             return Ok(());
         }
@@ -160,7 +160,7 @@ pub fn cmd_gerr(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
     save_rec(con, kind, &mut rec)?;
     if !crate::model::STATE.lock().unwrap().quiet {
         let errs = rec["errors"].as_array().unwrap();
-        println!("ok: {} error(s)", errs.len());
+        println!("{} {} error(s)", crate::style::ok("ok:"), errs.len());
     }
     Ok(())
 }
@@ -200,7 +200,12 @@ pub fn cmd_gset(
     }
     save_rec(con, kind, &mut rec)?;
     if !crate::model::STATE.lock().unwrap().quiet {
-        println!("ok: {} = {}", field, value.trim().trim_start());
+        println!(
+            "{} {} = {}",
+            crate::style::ok("ok:"),
+            field,
+            value.trim().trim_start()
+        );
     }
     Ok(())
 }

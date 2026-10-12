@@ -162,6 +162,6 @@ fn cmd_db_del(rest: &[String]) -> Result<(), GxxError> {
     if name == &current {
         std::fs::write(crate::db::config_path(), "")?;
     }
-    println!("deleted: {}", name);
+    println!("{}: {}", crate::style::warn("deleted"), name);
     Ok(())
 }

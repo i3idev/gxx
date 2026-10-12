@@ -60,7 +60,8 @@ pub fn cmd_add(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     }
     save_rec(con, "word", &mut rec)?;
     if !STATE.lock().unwrap().quiet {
-        println!("{}: {}", if created { "added" } else { "updated" }, name);
+        let tag = if created { "added" } else { "updated" };
+        println!("{}: {}", crate::style::ok(tag), name);
     }
     Ok(())
 }
@@ -185,7 +186,7 @@ pub fn cmd_del(con: &Connection, args: &[String]) -> Result<(), GxxError> {
         [entry_id("word", &args[0])],
     )?;
     if !STATE.lock().unwrap().quiet {
-        println!("deleted: {}", clean(&args[0]));
+        println!("{}: {}", crate::style::warn("deleted"), clean(&args[0]));
     }
     Ok(())
 }
@@ -220,7 +221,12 @@ pub fn cmd_set_word(con: &Connection, field: &str, args: &[String]) -> Result<()
     }
     save_rec(con, "word", &mut rec)?;
     if !STATE.lock().unwrap().quiet {
-        println!("ok: {} = {}", field, value.clone().trim_end().trim_start());
+        println!(
+            "{} {} = {}",
+            crate::style::ok("ok:"),
+            field,
+            value.clone().trim_end().trim_start()
+        );
     }
     Ok(())
 }
@@ -284,7 +290,11 @@ pub fn cmd_sense(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             senses_mut(&mut rec).push(sense);
             save_rec(con, "word", &mut rec)?;
             if !STATE.lock().unwrap().quiet {
-                println!("ok: added sense #{}", senses_mut(&mut rec).len());
+                println!(
+                    "{} added sense #{}",
+                    crate::style::ok("ok:"),
+                    senses_mut(&mut rec).len()
+                );
             }
         }
         "del" => {
@@ -305,7 +315,7 @@ pub fn cmd_sense(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             senses.remove(n - 1);
             save_rec(con, "word", &mut rec)?;
             if !STATE.lock().unwrap().quiet {
-                println!("ok: deleted sense #{}", n);
+                println!("{} deleted sense #{}", crate::style::ok("ok:"), n);
             }
         }
         "show" => {
@@ -400,7 +410,7 @@ pub fn cmd_coll(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             colls.remove(n - 1);
             save_rec(con, "word", &mut rec)?;
             if !STATE.lock().unwrap().quiet {
-                println!("ok: deleted collocation #{}", n);
+                println!("{} deleted collocation #{}", crate::style::ok("ok:"), n);
             }
         }
         _ => {
@@ -470,7 +480,11 @@ pub fn cmd_family(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             family_mut(&mut rec).push(member);
             save_rec(con, "word", &mut rec)?;
             if !STATE.lock().unwrap().quiet {
-                println!("ok: added family member #{}", family_mut(&mut rec).len());
+                println!(
+                    "{} added family member #{}",
+                    crate::style::ok("ok:"),
+                    family_mut(&mut rec).len()
+                );
             }
         }
         "del" => {
@@ -491,7 +505,11 @@ pub fn cmd_family(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             }
             save_rec(con, "word", &mut rec)?;
             if !STATE.lock().unwrap().quiet {
-                println!("ok: deleted family member '{}'", related);
+                println!(
+                    "{} deleted family member '{}'",
+                    crate::style::ok("ok:"),
+                    related
+                );
             }
         }
         _ => return Err(GxxError::msg(format!("unknown family subcommand: {}", sub))),
@@ -637,9 +655,9 @@ pub fn cmd_say(con: &Connection, args: &[String]) -> Result<(), GxxError> {
 
     if !STATE.lock().unwrap().quiet {
         if let Some(ex_num) = example_num {
-            println!("ok: played example #{}", ex_num);
+            println!("{} played example #{}", crate::style::ok("ok:"), ex_num);
         } else {
-            println!("ok: played '{}'", word_name);
+            println!("{} played '{}'", crate::style::ok("ok:"), word_name);
         }
     }
 

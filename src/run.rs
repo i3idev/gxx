@@ -68,6 +68,7 @@ pub fn run_clap(
         Command::Form(sub) => run_gram("form", sub, db_override, json_output),
         Command::Load(args) => cmd_load(&[args.file], db_override),
         Command::Model(sub) => run_model(sub, json_output),
+        Command::Topics(args) => crate::topics::print_topic(args.topic.as_deref()),
         Command::External(args) => {
             // Handle special legacy commands and direct word lookup
             if args.is_empty() {
@@ -721,14 +722,17 @@ fn print_voice_list() -> Result<(), GxxError> {
         .and_then(|c| c.active_model_id);
 
     println!(
-        "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {:<6} ACTIVE",
-        "ID", "LANG", "VOICE", "QUALITY", "SRATE", "STRETCH", "LS", "NS", "NW"
+        "{}",
+        crate::style::header(&format!(
+            "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {:<6} ACTIVE",
+            "ID", "LANG", "VOICE", "QUALITY", "SRATE", "STRETCH", "LS", "NS", "NW"
+        ))
     );
     for m in registry.all() {
         let mark = if Some(&m.id) == active_id.as_ref() {
-            "✓"
+            crate::style::ok("✓")
         } else {
-            ""
+            String::new()
         };
         let stretch = m
             .default_vowel_stretch
