@@ -1,3 +1,7 @@
+#![allow(rustdoc::broken_intra_doc_links)]
+#![allow(rustdoc::invalid_html_tags)]
+#![allow(rustdoc::bare_urls)]
+
 //! # gxx
 //!
 //! Bilingual (English / Persian) vocabulary and grammar notebook CLI with a
