@@ -1,14 +1,13 @@
-//! Integration tests for Reading Mode entry point.
+//! Integration tests for the `read` subcommand.
 //!
-//! These tests verify that the `-r`/`--read` arguments correctly route
-//! to the Reading Mode GUI and handle files appropriately. They do NOT
-//! require an interactive display — in headless CI environments, the
-//! Slint window creation will fail, but we verify dispatch correctness.
+//! These tests verify that `gxx read <file>` handles files appropriately
+//! and routes to TTS rather than falling through to vocabulary lookup or
+//! the GUI. Empty and whitespace-only files must be rejected.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-/// `-r` with an empty file should report an error (empty file).
+/// `read` with an empty file should report an error.
 #[test]
 fn test_read_mode_empty_file() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -16,16 +15,15 @@ fn test_read_mode_empty_file() {
     std::fs::write(&test_file, "").unwrap();
 
     let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("-r").arg(&test_file);
+    cmd.arg("read").arg(&test_file);
     cmd.assert().failure().stderr(
-        predicate::str::contains("reading mode not available")
+        predicate::str::contains("no readable text")
             .or(predicate::str::contains("empty"))
-            .or(predicate::str::contains("No words"))
-            .or(predicate::str::contains("Failed to read")),
+            .or(predicate::str::contains("No words")),
     );
 }
 
-/// `-r` with a whitespace-only file should report an error.
+/// `read` with a whitespace-only file should report an error.
 #[test]
 fn test_read_mode_whitespace_only_file() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -33,12 +31,11 @@ fn test_read_mode_whitespace_only_file() {
     std::fs::write(&test_file, "   \n\n  \t  ").unwrap();
 
     let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("-r").arg(&test_file);
+    cmd.arg("read").arg(&test_file);
     cmd.assert().failure().stderr(
-        predicate::str::contains("reading mode not available")
+        predicate::str::contains("no readable text")
             .or(predicate::str::contains("empty"))
-            .or(predicate::str::contains("No words"))
-            .or(predicate::str::contains("Failed to read")),
+            .or(predicate::str::contains("No words")),
     );
 }
 
@@ -74,7 +71,7 @@ fn test_reading_mode_separate_from_app_window() {
     std::fs::write(&test_file, "Test separation.").unwrap();
 
     let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("-r").arg(&test_file);
+    cmd.arg("read").arg(&test_file);
 
     let output = cmd.timeout(std::time::Duration::from_secs(10)).output();
 

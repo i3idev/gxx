@@ -9,6 +9,7 @@ name = "gxx"
 path = "src/main.rs"
 
 [dependencies]
+ctrlc = "3"
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

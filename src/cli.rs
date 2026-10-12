@@ -1,6 +1,6 @@
 //! CLI definitions using clap.
 
-use clap::{Parser, Subcommand, Args, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand, Args, ValueEnum};
     version,
     about = "Bilingual (English / Persian) word and grammar notebook",
     long_about = "gxx - A CLI tool for managing bilingual vocabulary and grammar notes.\nStores data in SQLite databases under ~/.gxx/db/.",
-    allow_hyphen_values = true,
+    allow_hyphen_values = true
 )]
 pub struct Cli {
     /// Database to use for this command (overrides active database)
@@ -22,14 +22,6 @@ pub struct Cli {
     /// Quiet mode (suppress non-error output)
     #[arg(short, long, global = true)]
     pub quiet: bool,
-
-    /// Launch reading mode GUI (legacy)
-    #[arg(short = 'r', long = "read", global = true, value_name = "FILE")]
-    pub read_file: Option<String>,
-
-    /// Launch reading mode GUI app (legacy)
-    #[arg(long, global = true, hide = true)]
-    pub app: bool,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -82,6 +74,18 @@ pub enum Command {
 
     /// Text-to-speech playback
     Say(SayArgs),
+
+    /// Read a text file aloud (paragraph by paragraph)
+    Read(ReadArgs),
+
+    /// Speak arbitrary text (no DB lookup, no caching by word)
+    Paragraph(ParagraphArgs),
+
+    /// Speak arbitrary text (no DB lookup, no caching by word)
+
+    /// TTS model management
+    #[command(subcommand)]
+    Model(ModelCommand),
 
     /// Set/get part of speech
     Pos(FieldArgs),
@@ -338,6 +342,74 @@ pub struct SayArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ReadArgs {
+    /// File to read
+    pub file: std::path::PathBuf,
+
+    /// Override voice (language code like en/fa or name like cori/amir)
+    #[arg(long, value_name = "CODE")]
+    pub voice: Option<String>,
+
+    /// Auto-detect language per segment
+    #[arg(long)]
+    pub auto: bool,
+
+    /// Playback speed multiplier
+    #[arg(long, default_value_t = 1.0)]
+    pub speed: f32,
+
+    /// Playback volume multiplier
+    #[arg(long, default_value_t = 1.0)]
+    pub volume: f32,
+
+    /// Pause between paragraphs (milliseconds)
+    #[arg(long, value_name = "MS", default_value_t = 300)]
+    pub pause_ms: u64,
+
+    /// Start from paragraph N (1-based)
+    #[arg(long, value_name = "N")]
+    pub start: Option<usize>,
+}
+
+#[derive(Args, Debug)]
+pub struct ParagraphArgs {
+    /// Text to speak (quote it if it has spaces)
+    pub text: Option<String>,
+
+    /// Read text from a file instead of inline
+    #[arg(short = 'f', long, value_name = "PATH")]
+    pub file: Option<std::path::PathBuf>,
+
+    /// Manual IPA phonemes (skips eSpeak and language check)
+    #[arg(long, value_name = "IPA")]
+    pub phonemes: Option<String>,
+
+    /// Override model by language code (en, fa) or voice name (cori, ryan, amir)
+    #[arg(long, value_name = "CODE")]
+    pub voice: Option<String>,
+
+    /// Auto-select model per language segment (mixed text supported)
+    #[arg(long)]
+    pub auto: bool,
+
+    /// Repeat N times (1-10)
+    #[arg(long, value_name = "N", default_value = "1")]
+    pub repeat: u32,
+
+    /// Playback speed multiplier
+    #[arg(long, default_value_t = 1.0)]
+    pub speed: f32,
+
+    /// Playback volume multiplier
+    #[arg(long, default_value_t = 1.0)]
+    pub volume: f32,
+
+    /// Pause between paragraphs (milliseconds)
+    #[arg(long, value_name = "MS", default_value_t = 300)]
+    pub paragraph_pause_ms: u64,
+}
+
+#[derive(Args, Debug)]
 pub struct FieldArgs {
     /// Word to modify
     pub word: String,
@@ -462,4 +534,22 @@ pub struct ErrArgs {
 pub struct LoadArgs {
     /// Path to .gxx command file
     pub file: String,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ModelCommand {
+    /// List all available TTS models
+    List,
+
+    /// Show the currently active model
+    Current,
+
+    /// Set the active model by ID
+    Use { id: String },
+
+    /// Show detailed info about a model
+    Info { id: String },
+
+    /// Clear active model (revert to auto-discovery)
+    Clear,
 }

@@ -30,6 +30,8 @@ pub fn cache_key(text: &str, config: &PiperConfig) -> String {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     config.piper_version.hash(&mut hasher);
+    config.espeak.voice.hash(&mut hasher);
+    config.num_speakers.hash(&mut hasher);
     config.audio.sample_rate.hash(&mut hasher);
     config.inference.noise_scale.to_bits().hash(&mut hasher);
     config.inference.length_scale.to_bits().hash(&mut hasher);

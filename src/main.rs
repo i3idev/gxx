@@ -9,10 +9,10 @@ mod render;
 mod run;
 mod tts;
 
-use cli::Cli;
-use clap::Parser;
 use crate::error::GxxError;
 use crate::run::run_cli;
+use clap::Parser;
+use cli::Cli;
 
 fn main() {
     // Ensure stdout encoding on Windows

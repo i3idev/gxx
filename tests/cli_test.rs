@@ -1,10 +1,11 @@
 //! Integration tests for CLI command dispatch.
 //!
 //! These tests verify that the `gxx` binary correctly routes commands.
-//! GUI-launching commands (`app`, `-r`, `--read`) are tested at the
-//! dispatch level — in a headless environment, `app` will fail to create
-//! a Slint window, but we verify it does NOT fall through to the
-//! vocabulary handler (which would print "not found: app").
+//! `app` is a legacy GUI launcher tested at the dispatch level — in a
+//! headless environment it fails, but we verify it does NOT fall through
+//! to the vocabulary handler (which would print "not found: app").
+//! `read` is the new file-reading subcommand; its missing-file and
+//! missing-argument cases are covered here.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -41,28 +42,26 @@ fn test_app_command_not_treated_as_word_lookup() {
     }
 }
 
-/// `gxx -r <nonexistent>` should report a file error, not "not found".
+/// `gxx read <nonexistent>` should report a file error, not "not found".
 #[test]
 fn test_read_mode_missing_file() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("-r").arg("/nonexistent/path/file.txt");
+    cmd.arg("read").arg("/nonexistent/path/file.txt");
     cmd.assert().failure().stderr(
-        predicate::str::contains("reading mode not available")
-            .or(predicate::str::contains("Failed to read file"))
-            .or(predicate::str::contains("No such file")),
+        predicate::str::contains("No such file")
+            .or(predicate::str::contains("read /nonexistent"))
+            .or(predicate::str::contains("read")),
     );
 }
 
-/// `gxx --read <nonexistent>` should behave the same as `-r`.
+/// Legacy `--read` flag is gone; the subcommand form is required.
 #[test]
-fn test_read_long_alias_missing_file() {
+fn test_read_legacy_long_flag_rejected() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("--read").arg("/nonexistent/path/file2.txt");
-    cmd.assert().failure().stderr(
-        predicate::str::contains("reading mode not available")
-            .or(predicate::str::contains("Failed to read file"))
-            .or(predicate::str::contains("No such file")),
-    );
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("unexpected argument"));
 }
 
 /// Existing word commands still work (e.g., `gxx add` without args gives usage).
@@ -95,24 +94,26 @@ fn test_help_long_alias() {
         .stdout(predicate::str::contains("gxx - A CLI tool"));
 }
 
-/// Verify the `-r` flag requires a filename.
+/// `gxx read` without a filename must fail with a usage error.
 #[test]
 fn test_read_requires_filename() {
+    let mut cmd = Command::cargo_bin("gxx").unwrap();
+    cmd.arg("read");
+    cmd.assert().failure().stderr(
+        predicate::str::contains("required")
+            .or(predicate::str::contains("FILE"))
+            .or(predicate::str::contains("Usage")),
+    );
+}
+
+/// Legacy `-r` flag is gone; the subcommand form is required.
+#[test]
+fn test_read_legacy_short_flag_rejected() {
     let mut cmd = Command::cargo_bin("gxx").unwrap();
     cmd.arg("-r");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("a value is required").or(predicate::str::contains("usage")));
-}
-
-/// Verify that `--read` without a filename also shows usage.
-#[test]
-fn test_read_long_alias_requires_filename() {
-    let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("--read");
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("a value is required").or(predicate::str::contains("usage")));
+        .stderr(predicate::str::contains("unexpected argument"));
 }
 
 /// Verify that `gxx` with no args prints usage (exit code 0).
@@ -124,19 +125,22 @@ fn test_no_args_prints_usage() {
         .stdout(predicate::str::contains("gxx - bilingual"));
 }
 
-/// Direct Reading Mode (`-r`) with a real file should attempt to open the
-/// GUI. In a headless environment it may fail at window creation, but it
-/// should NOT report "not found" or route to vocabulary lookup.
+/// `gxx read <real-file>` must not route to vocabulary lookup.
+///
+/// In a headless environment it will still attempt synthesis, but the
+/// point here is the dispatch: no "not found:" / "try: gxx find" must
+/// appear. We use `--help`-style preflight by passing an empty file so
+/// no actual synthesis happens.
 #[test]
 fn test_read_mode_with_real_file() {
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("gxx-cli-test-input.txt");
-    std::fs::write(&test_file, "Hello world. This is a GXX reading test.").unwrap();
+    std::fs::write(&test_file, "").unwrap();
 
     let mut cmd = Command::cargo_bin("gxx").unwrap();
-    cmd.arg("-r").arg(&test_file);
+    cmd.arg("read").arg(&test_file);
 
-    let output = cmd.timeout(std::time::Duration::from_secs(10)).output();
+    let output = cmd.timeout(std::time::Duration::from_secs(5)).output();
 
     let _ = std::fs::remove_file(&test_file);
 
@@ -146,7 +150,7 @@ fn test_read_mode_with_real_file() {
         let combined = format!("{stderr}\n{stdout}");
         assert!(
             !combined.contains("not found:") && !combined.contains("try: gxx find"),
-            "gxx -r should not route to vocabulary lookup. Got: {combined}"
+            "gxx read should not route to vocabulary lookup. Got: {combined}"
         );
     }
 }

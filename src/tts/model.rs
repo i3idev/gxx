@@ -27,6 +27,11 @@ pub struct PiperConfig {
 
     pub espeak: EspeakConfig,
     pub piper_version: String,
+
+    /// Runtime-only: path to the .onnx file this config was loaded from.
+    /// Not serialized to/from JSON.
+    #[serde(default, skip)]
+    pub onnx_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

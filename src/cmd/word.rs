@@ -11,8 +11,7 @@ use crate::model::{
     new_sense, new_word, senses_mut, title_of, STATE,
 };
 use crate::render::{render_entry, render_word_list};
-use crate::tts::model::{load_config, model_config_path};
-use crate::tts::{say_text, say_text_manual, PlaybackOptions};
+use crate::tts::{say_manual_with_active_model, say_with_active_model, PlaybackOptions};
 
 /// `gxx add <word> [translations...] [-p pos] [-l level]`
 pub fn cmd_add(con: &Connection, args: &[String]) -> Result<(), GxxError> {
@@ -623,10 +622,6 @@ pub fn cmd_say(con: &Connection, args: &[String]) -> Result<(), GxxError> {
         word_name.clone()
     };
 
-    // Load TTS model config
-    let config_path = model_config_path()?;
-    let config = load_config(&config_path)?;
-
     // Synthesize and play
     let options = PlaybackOptions {
         repeat,
@@ -635,9 +630,9 @@ pub fn cmd_say(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     };
 
     if let Some(ipa) = manual_phonemes.as_deref() {
-        say_text_manual(ipa, &config, options, None)?;
+        say_manual_with_active_model(ipa, options, None)?;
     } else {
-        say_text(&text, &config, options, None)?;
+        say_with_active_model(&text, options, None)?;
     }
 
     if !STATE.lock().unwrap().quiet {

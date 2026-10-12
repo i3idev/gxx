@@ -1,6 +1,8 @@
 //! Command dispatch for clap-based CLI.
 
-use crate::cli::{Cli, Command, DbCommand, GramCommand, SenseAction, CollAction, FamilyAction};
+use crate::cli::{
+    Cli, CollAction, Command, DbCommand, FamilyAction, GramCommand, ModelCommand, SenseAction,
+};
 use crate::cmd::db::{cmd_db, cmd_init};
 use crate::cmd::grammar::cmd_group;
 use crate::cmd::load::cmd_load;
@@ -10,6 +12,9 @@ use crate::cmd::word::{
     cmd_set_word, cmd_show,
 };
 use crate::error::GxxError;
+use crate::tts::registry::{
+    clear_active_model, load_model_config, set_active_model, ModelRegistry,
+};
 use rusqlite::Connection;
 
 /// Run a clap-parsed CLI (handles global flags and subcommands).
@@ -17,19 +22,6 @@ pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
     // Handle global flags first
     if cli.quiet {
         crate::model::set_quiet(true);
-    }
-
-    // Handle legacy reading mode flags
-    if cli.app {
-        return Err(GxxError::msg(
-            "reading mode GUI not available in this build (requires Slint)"
-        ));
-    }
-    if let Some(file) = cli.read_file {
-        return Err(GxxError::msg(format!(
-            "reading mode not available: {}",
-            file
-        )));
     }
 
     // Handle subcommand
@@ -43,7 +35,11 @@ pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
 }
 
 /// Run a clap-parsed command (subcommand only).
-pub fn run_clap(cmd: Command, db_override: Option<&str>, json_output: bool) -> Result<(), GxxError> {
+pub fn run_clap(
+    cmd: Command,
+    db_override: Option<&str>,
+    json_output: bool,
+) -> Result<(), GxxError> {
     match cmd {
         Command::Init => cmd_init(),
         Command::Db(sub) => run_db(sub, db_override),
@@ -60,6 +56,8 @@ pub fn run_clap(cmd: Command, db_override: Option<&str>, json_output: bool) -> R
         Command::Coll(args) => run_coll(args, db_override),
         Command::Family(args) => run_family(args, db_override),
         Command::Say(args) => run_say(args, db_override),
+        Command::Paragraph(args) => run_paragraph(args, db_override),
+        Command::Read(args) => run_read(args, db_override),
         Command::Pos(args) => run_field("pos", args, db_override),
         Command::Lvl(args) => run_field("lvl", args, db_override),
         Command::Pron(args) => run_field("pron", args, db_override),
@@ -69,6 +67,7 @@ pub fn run_clap(cmd: Command, db_override: Option<&str>, json_output: bool) -> R
         Command::Style(sub) => run_gram("style", sub, db_override, json_output),
         Command::Form(sub) => run_gram("form", sub, db_override, json_output),
         Command::Load(args) => cmd_load(&[args.file], db_override),
+        Command::Model(sub) => run_model(sub, json_output),
         Command::External(args) => {
             // Handle special legacy commands and direct word lookup
             if args.is_empty() {
@@ -77,21 +76,25 @@ pub fn run_clap(cmd: Command, db_override: Option<&str>, json_output: bool) -> R
             }
             let first = &args[0];
             match first.as_str() {
-                "app" | "read" => {
-                    // Try to launch GUI reading mode (will fail in headless)
-                    Err(GxxError::msg(
-                        "reading mode GUI not available in this build (requires Slint)"
-                    ))
-                }
-                "-r" | "--read" => {
-                    // Reading mode with file argument
+                "app" => Err(GxxError::msg(
+                    "reading mode GUI not available in this build (requires Slint)",
+                )),
+                "read" | "-r" | "--read" => {
                     if args.len() < 2 {
-                        return Err(GxxError::msg("usage: gxx -r <file.txt>"));
+                        return Err(GxxError::msg(
+                            "usage: gxx read <file.txt> [--auto|--voice CODE]",
+                        ));
                     }
-                    Err(GxxError::msg(format!(
-                        "reading mode not available: {}",
-                        args[1]
-                    )))
+                    let read_args = crate::cli::ReadArgs {
+                        file: std::path::PathBuf::from(&args[1]),
+                        voice: None,
+                        auto: false,
+                        speed: 1.0,
+                        volume: 1.0,
+                        pause_ms: 300,
+                        start: None,
+                    };
+                    run_read(read_args, db_override)
                 }
                 "help" | "-h" | "--help" => {
                     print_usage();
@@ -103,7 +106,7 @@ pub fn run_clap(cmd: Command, db_override: Option<&str>, json_output: bool) -> R
                     let sections = &args[1..];
                     let con = crate::db::connect(db_override)?;
                     if json_output {
-                        print_entry_json(&con, &[word.clone()])?;
+                        print_entry_json(&con, std::slice::from_ref(word))?;
                         Ok(())
                     } else {
                         let mut show_args = vec![word.clone()];
@@ -123,11 +126,19 @@ fn run_db(sub: DbCommand, _db_override: Option<&str>) -> Result<(), GxxError> {
         DbCommand::List => cmd_db(&con, &["list".to_string()]),
         DbCommand::Use { name } => cmd_db(&con, &["use".to_string(), name]),
         DbCommand::Info { name } => {
-            let args = if let Some(n) = name { vec!["info".to_string(), n] } else { vec!["info".to_string()] };
+            let args = if let Some(n) = name {
+                vec!["info".to_string(), n]
+            } else {
+                vec!["info".to_string()]
+            };
             cmd_db(&con, &args)
         }
         DbCommand::Del { name, yes } => {
-            let args = if yes { vec!["del".to_string(), name, "--yes".to_string()] } else { vec!["del".to_string(), name] };
+            let args = if yes {
+                vec!["del".to_string(), name, "--yes".to_string()]
+            } else {
+                vec!["del".to_string(), name]
+            };
             cmd_db(&con, &args)
         }
     }
@@ -213,10 +224,7 @@ fn run_list(
     }
 }
 
-fn run_del(
-    args: crate::cli::DelArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_del(args: crate::cli::DelArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let argv = if args.yes {
         vec![args.word, "--yes".to_string()]
@@ -226,10 +234,7 @@ fn run_del(
     cmd_del(&con, &argv)
 }
 
-fn run_tr(
-    args: crate::cli::TrArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_tr(args: crate::cli::TrArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(lang) = args.lang {
@@ -250,10 +255,7 @@ fn run_syn_ant(
     cmd_syn_ant(&con, field, &argv)
 }
 
-fn run_ex(
-    args: crate::cli::ExArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_ex(args: crate::cli::ExArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(n) = args.number {
@@ -263,10 +265,7 @@ fn run_ex(
     cmd_ex_word(&con, &argv)
 }
 
-fn run_sense(
-    args: crate::cli::SenseArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_sense(args: crate::cli::SenseArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(action) = args.action {
@@ -292,10 +291,7 @@ fn run_sense(
     cmd_sense(&con, &argv)
 }
 
-fn run_coll(
-    args: crate::cli::CollArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_coll(args: crate::cli::CollArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(action) = args.action {
@@ -313,10 +309,7 @@ fn run_coll(
     cmd_coll(&con, &argv)
 }
 
-fn run_family(
-    args: crate::cli::FamilyArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_family(args: crate::cli::FamilyArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(action) = args.action {
@@ -338,10 +331,7 @@ fn run_family(
     cmd_family(&con, &argv)
 }
 
-fn run_say(
-    args: crate::cli::SayArgs,
-    db_override: Option<&str>,
-) -> Result<(), GxxError> {
+fn run_say(args: crate::cli::SayArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
     if let Some(ex) = args.example {
@@ -366,6 +356,222 @@ fn run_say(
         argv.push(ipa);
     }
     cmd_say(&con, &argv)
+}
+
+/// Find a model by language code ("en", "fa") or voice name ("cori", "amir")
+/// and load its PiperConfig.
+fn load_config_for_voice(query: &str) -> Result<crate::tts::model::PiperConfig, GxxError> {
+    let registry = crate::tts::registry::ModelRegistry::discover()?;
+    let q = query.to_lowercase();
+
+    let entry = registry
+        .all()
+        .into_iter()
+        .find(|e| {
+            e.available
+                && (e.language.to_lowercase().starts_with(&q)
+                    || e.voice.to_lowercase() == q
+                    || e.language.to_lowercase() == q)
+        })
+        .ok_or_else(|| {
+            GxxError::msg(format!(
+                "no available model for voice '{}'. run `gxx model list`",
+                query
+            ))
+        })?;
+
+    let mut config = crate::tts::model::load_config(&entry.config_path)?;
+    config.onnx_path = Some(entry.onnx_path.clone());
+    Ok(config)
+}
+
+/// Ctrl+C signal flag shared across `read` invocations.
+static READ_STOP_FLAG: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
+    std::sync::OnceLock::new();
+
+fn get_read_stop_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    READ_STOP_FLAG
+        .get_or_init(|| {
+            let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let f = std::sync::Arc::clone(&flag);
+            let _ = ctrlc::set_handler(move || {
+                f.store(true, std::sync::atomic::Ordering::Release);
+                eprintln!("\nTTS: interrupted, stopping after current paragraph");
+            });
+            flag
+        })
+        .clone()
+}
+
+fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<(), GxxError> {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    let content = std::fs::read_to_string(&args.file)
+        .map_err(|e| GxxError::msg(format!("read {}: {}", args.file.display(), e)))?;
+
+    let all_paragraphs: Vec<&str> = content
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if all_paragraphs.is_empty() {
+        return Err(GxxError::msg("file has no readable text"));
+    }
+
+    let start = args.start.unwrap_or(1).max(1) - 1;
+    if start >= all_paragraphs.len() {
+        return Err(GxxError::msg(format!(
+            "start paragraph {} out of range (file has {})",
+            start + 1,
+            all_paragraphs.len()
+        )));
+    }
+    let paragraphs = &all_paragraphs[start..];
+    let total = paragraphs.len();
+
+    let stop_flag = get_read_stop_flag();
+    stop_flag.store(false, Ordering::Release);
+
+    let make_opts = || crate::tts::PlaybackOptions {
+        repeat: 1,
+        speed: args.speed,
+        volume: args.volume,
+    };
+
+    for (i, para) in paragraphs.iter().enumerate() {
+        if stop_flag.load(Ordering::Acquire) {
+            eprintln!("TTS: stopped at paragraph {}", start + i + 1);
+            break;
+        }
+
+        eprintln!("TTS: paragraph {}/{}", start + i + 1, all_paragraphs.len());
+
+        if args.auto {
+            let segments = crate::tts::phonemizer::segment_by_language(para);
+            let speakable: Vec<(String, &'static str)> = segments
+                .into_iter()
+                .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
+                .collect();
+            for (chunk, lang) in &speakable {
+                if stop_flag.load(Ordering::Acquire) {
+                    break;
+                }
+                let config = load_config_for_voice(lang)?;
+                crate::tts::say_text(chunk, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
+            }
+        } else if let Some(voice) = args.voice.as_deref() {
+            let config = load_config_for_voice(voice)?;
+            crate::tts::say_text(para, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
+        } else {
+            crate::tts::say_with_active_model(para, make_opts(), Some(Arc::clone(&stop_flag)))?;
+        }
+
+        if i + 1 < total && args.pause_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(args.pause_ms));
+        }
+    }
+    Ok(())
+}
+
+fn run_paragraph(
+    args: crate::cli::ParagraphArgs,
+    _db_override: Option<&str>,
+) -> Result<(), GxxError> {
+    // 1) gather text
+    let text = match (args.text, args.file) {
+        (Some(t), None) => t,
+        (None, Some(p)) => std::fs::read_to_string(&p)
+            .map_err(|e| GxxError::msg(format!("read {}: {}", p.display(), e)))?,
+        (Some(_), Some(_)) => {
+            return Err(GxxError::msg("give text OR --file, not both"));
+        }
+        (None, None) => {
+            return Err(GxxError::msg("no text and no --file"));
+        }
+    };
+
+    // helper to build fresh options (PlaybackOptions may not be Clone)
+    let make_opts = || crate::tts::PlaybackOptions {
+        repeat: args.repeat,
+        speed: args.speed,
+        volume: args.volume,
+    };
+
+    // 2a) manual IPA path: skip eSpeak and language guard
+    if let Some(ipa) = args.phonemes {
+        if let Some(voice) = args.voice.as_deref() {
+            let config = load_config_for_voice(voice)?;
+            crate::tts::say_text_manual(&ipa, &config, make_opts(), None)?;
+        } else {
+            crate::tts::say_manual_with_active_model(&ipa, make_opts(), None)?;
+        }
+        return Ok(());
+    }
+
+    // 2a') auto mode: segment by language and use matching model per segment
+    if args.auto {
+        let segments = crate::tts::phonemizer::segment_by_language(&text);
+        let speakable: Vec<(String, &'static str)> = segments
+            .into_iter()
+            .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
+            .collect();
+        if speakable.is_empty() {
+            return Err(GxxError::msg("no speakable text"));
+        }
+        let total = speakable.len();
+        for (i, (chunk, lang)) in speakable.iter().enumerate() {
+            let config = load_config_for_voice(lang)?;
+            crate::tts::say_text(chunk, &config, make_opts(), None)?;
+            if i + 1 < total && args.paragraph_pause_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(args.paragraph_pause_ms));
+            }
+        }
+        return Ok(());
+    }
+
+    // 2b) voice override path
+    if let Some(voice) = args.voice.as_deref() {
+        let config = load_config_for_voice(voice)?;
+        let paragraphs: Vec<&str> = text
+            .split("\n\n")
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if paragraphs.is_empty() {
+            return Err(GxxError::msg("no text to speak"));
+        }
+        let total = paragraphs.len();
+        for (i, para) in paragraphs.iter().enumerate() {
+            crate::tts::say_text(para, &config, make_opts(), None)?;
+            if i + 1 < total && args.paragraph_pause_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(args.paragraph_pause_ms));
+            }
+        }
+        return Ok(());
+    }
+
+    // 3) split on blank lines (paragraphs)
+    let paragraphs: Vec<&str> = text
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if paragraphs.is_empty() {
+        return Err(GxxError::msg("no text to speak"));
+    }
+
+    // 4) speak each paragraph, with a small pause between
+    let total = paragraphs.len();
+    for (i, para) in paragraphs.iter().enumerate() {
+        crate::tts::say_with_active_model(para, make_opts(), None)?;
+        if i + 1 < total && args.paragraph_pause_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(args.paragraph_pause_ms));
+        }
+    }
+    Ok(())
 }
 
 fn run_field(
@@ -674,6 +880,98 @@ fn print_entry_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
             println!("{}", serde_json::to_string_pretty(&found)?);
             Ok(())
         }
+    }
+}
+
+fn run_model(sub: ModelCommand, _json_output: bool) -> Result<(), GxxError> {
+    match sub {
+        ModelCommand::List => {
+            let registry = ModelRegistry::discover()?;
+            if registry.is_empty() {
+                println!("no models found");
+                return Ok(());
+            }
+
+            let config = load_model_config()?;
+            let active_id = config.active_model_id.as_deref();
+
+            println!("ID           NAME                          LANGUAGE  VOICE   QUALITY  SRATE  STATUS");
+            for model in registry.all() {
+                let status = if active_id == Some(model.id.as_str()) {
+                    " (active)"
+                } else {
+                    ""
+                };
+                let available = if model.available { "ok" } else { "missing" };
+                println!(
+                    "{:<12} {:<28} {:<8} {:<7} {:<7} {:<6} {}{}",
+                    model.id,
+                    truncate(&model.name, 28),
+                    model.language,
+                    model.voice,
+                    model.quality,
+                    model.sample_rate,
+                    available,
+                    status
+                );
+            }
+            Ok(())
+        }
+        ModelCommand::Current => {
+            let config = load_model_config()?;
+            if let Some(active_id) = config.active_model_id {
+                let registry = ModelRegistry::discover()?;
+                if let Some(model) = registry.get(&active_id) {
+                    println!("{}", model.id);
+                } else {
+                    println!("{} (not found)", active_id);
+                }
+            } else {
+                println!("auto (not set)");
+            }
+            Ok(())
+        }
+        ModelCommand::Use { id } => {
+            set_active_model(&id)?;
+            println!("active model: {}", id);
+            Ok(())
+        }
+        ModelCommand::Info { id } => {
+            let registry = ModelRegistry::discover()?;
+            if let Some(model) = registry.get(&id) {
+                println!("ID          : {}", model.id);
+                println!("Name        : {}", model.name);
+                println!("Language    : {}", model.language);
+                println!("Voice       : {}", model.voice);
+                println!("Quality     : {}", model.quality);
+                println!("Sample Rate : {} Hz", model.sample_rate);
+                println!("ONNX Path   : {}", model.onnx_path.display());
+                println!("Config Path : {}", model.config_path.display());
+                if let Some(card) = &model.card_path {
+                    println!("Card Path   : {}", card.display());
+                }
+                println!(
+                    "Available   : {}",
+                    if model.available { "yes" } else { "no" }
+                );
+            } else {
+                return Err(GxxError::msg(format!("model '{}' not found", id)));
+            }
+            Ok(())
+        }
+        ModelCommand::Clear => {
+            clear_active_model()?;
+            println!("active model cleared (using auto-discovery)");
+            Ok(())
+        }
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max - 3])
     }
 }
 
