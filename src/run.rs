@@ -678,8 +678,8 @@ fn print_voice_list() -> Result<(), GxxError> {
         .and_then(|c| c.active_model_id);
 
     println!(
-        "{:<14} {:<8} {:<8} {:<8} {:<6} ACTIVE",
-        "ID", "LANG", "VOICE", "QUALITY", "SRATE"
+        "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} ACTIVE",
+        "ID", "LANG", "VOICE", "QUALITY", "SRATE", "STRETCH", "LS", "NS"
     );
     for m in registry.all() {
         let mark = if Some(&m.id) == active_id.as_ref() {
@@ -687,9 +687,21 @@ fn print_voice_list() -> Result<(), GxxError> {
         } else {
             ""
         };
+        let stretch = m
+            .default_vowel_stretch
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into());
+        let ls = m
+            .default_length_scale
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or_else(|| "-".into());
+        let ns = m
+            .default_noise_scale
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or_else(|| "-".into());
         println!(
-            "{:<14} {:<8} {:<8} {:<8} {:<6} {}",
-            m.id, m.language, m.voice, m.quality, m.sample_rate, mark
+            "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {}",
+            m.id, m.language, m.voice, m.quality, m.sample_rate, stretch, ls, ns, mark
         );
     }
     Ok(())
