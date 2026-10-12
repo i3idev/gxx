@@ -1476,3 +1476,66 @@ OPTIONS:
 "#
     );
 }
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_temp(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn test_progress_key_stable() {
+        let f = write_temp("hello");
+        let k1 = progress_key(f.path()).unwrap();
+        let k2 = progress_key(f.path()).unwrap();
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_progress_key_changes_on_size_change() {
+        let f = write_temp("hello");
+        let k1 = progress_key(f.path()).unwrap();
+        // Overwriting with different content changes size and mtime.
+        std::fs::write(f.path(), "hello, world! this is longer").unwrap();
+        let k2 = progress_key(f.path()).unwrap();
+        assert_ne!(k1, k2);
+    }
+
+    #[test]
+    fn test_progress_key_missing_file() {
+        let p = std::path::PathBuf::from("/nonexistent/definitely-not-here.txt");
+        assert!(progress_key(&p).is_err());
+    }
+
+    #[test]
+    fn test_save_load_clear_roundtrip() {
+        let f = write_temp("hello");
+        // start clean
+        let _ = clear_progress(f.path());
+        assert!(load_progress(f.path()).is_none());
+
+        save_progress(f.path(), 7).unwrap();
+        assert_eq!(load_progress(f.path()), Some(7));
+
+        save_progress(f.path(), 42).unwrap();
+        assert_eq!(load_progress(f.path()), Some(42));
+
+        clear_progress(f.path()).unwrap();
+        assert!(load_progress(f.path()).is_none());
+    }
+
+    #[test]
+    fn test_load_progress_garbage_returns_none() {
+        let f = write_temp("hello");
+        let path = progress_path(f.path()).unwrap();
+        std::fs::write(&path, "not-a-number").unwrap();
+        assert!(load_progress(f.path()).is_none());
+        let _ = clear_progress(f.path());
+    }
+}
