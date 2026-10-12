@@ -436,11 +436,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| GxxError::msg(format!("read {}: {}", args.file.display(), e)))?;
 
-    let all_paragraphs: Vec<&str> = content
-        .split("\n\n")
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect();
+    let all_paragraphs = split_paragraphs(&content);
 
     if all_paragraphs.is_empty() {
         return Err(GxxError::msg("file has no readable text"));
@@ -591,6 +587,19 @@ fn print_voice_list() -> Result<(), GxxError> {
         );
     }
     Ok(())
+}
+
+/// Split a text body into paragraphs.
+///
+/// Prefers blank-line separation (`\n\n`). If the text has no blank
+/// lines, falls back to single newlines so plain line-based files still
+/// split into per-line paragraphs.
+fn split_paragraphs(text: &str) -> Vec<&str> {
+    let sep = if text.contains("\n\n") { "\n\n" } else { "\n" };
+    text.split(sep)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 /// Render chunks to a single WAV file.
@@ -753,11 +762,7 @@ fn run_paragraph(
             .clone()
             .filter(|v| !v.eq_ignore_ascii_case("auto"));
 
-        let paragraphs: Vec<&str> = text
-            .split("\n\n")
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paragraphs = split_paragraphs(&text);
         if paragraphs.is_empty() {
             return Err(GxxError::msg("no text to speak"));
         }
@@ -800,11 +805,7 @@ fn run_paragraph(
 
     // 1b) sentence-split path (play): split into sentences, pause between
     if args.sentence_split {
-        let paragraphs: Vec<&str> = text
-            .split("\n\n")
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paragraphs = split_paragraphs(&text);
         let voice_for_cfg = args
             .voice
             .clone()
@@ -897,11 +898,7 @@ fn run_paragraph(
         .filter(|v| !v.eq_ignore_ascii_case("auto"))
     {
         let config = load_config_for_voice(voice, args.length_scale, args.noise_scale)?;
-        let paragraphs: Vec<&str> = text
-            .split("\n\n")
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paragraphs = split_paragraphs(&text);
         if paragraphs.is_empty() {
             return Err(GxxError::msg("no text to speak"));
         }
