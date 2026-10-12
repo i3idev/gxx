@@ -82,6 +82,22 @@ impl ModelRegistry {
     pub fn is_empty(&self) -> bool {
         self.models.is_empty()
     }
+
+    /// Find the first available model matching a query string.
+    ///
+    /// Matching is case-insensitive and tries, in order:
+    /// 1. language prefix (`"en"` matches `"en_GB"` and `"en_US"`)
+    /// 2. exact voice name (`"cori"`, `"amir"`)
+    /// 3. exact language code (`"en_GB"`)
+    pub fn find_for_query(&self, query: &str) -> Option<&ModelEntry> {
+        let q = query.to_lowercase();
+        self.all().into_iter().find(|e| {
+            e.available
+                && (e.language.to_lowercase().starts_with(&q)
+                    || e.voice.to_lowercase() == q
+                    || e.language.to_lowercase() == q)
+        })
+    }
 }
 
 /// Recursively scan `dir` for `.onnx` files up to `MAX_DEPTH` levels.
@@ -346,6 +362,62 @@ mod tests {
         let path1 = Path::new("model/v1/en_GB-cori-high.onnx");
         let path2 = Path::new("model/v2/en_US-ryan-high.onnx");
         assert_ne!(generate_model_id(path1), generate_model_id(path2));
+    }
+
+    #[test]
+    fn test_find_for_query_language_prefix() {
+        let registry = ModelRegistry::discover().unwrap();
+        // "en" should match either en_GB or en_US
+        let hit = registry.find_for_query("en");
+        if !registry.is_empty() {
+            // only assert if any en model exists
+            let has_en = registry.all().iter().any(|m| m.language.starts_with("en"));
+            if has_en {
+                let m = hit.expect("en should match");
+                assert!(m.language.starts_with("en"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_for_query_case_insensitive() {
+        let registry = ModelRegistry::discover().unwrap();
+        if !registry.is_empty() {
+            let any = registry.all()[0];
+            let q_upper = any.language.to_uppercase();
+            let found = registry.find_for_query(&q_upper);
+            assert!(found.is_some(), "uppercase query should match");
+        }
+    }
+
+    #[test]
+    fn test_find_for_query_unknown() {
+        let registry = ModelRegistry::discover().unwrap();
+        assert!(registry.find_for_query("zz").is_none());
+        assert!(registry
+            .find_for_query("this-voice-does-not-exist")
+            .is_none());
+    }
+
+    #[test]
+    fn test_find_for_query_skips_unavailable() {
+        // construct a fake registry manually
+        let mut registry = ModelRegistry::new();
+        let entry = ModelEntry {
+            id: "deadbeef0000".into(),
+            name: "fake".into(),
+            language: "xx_XX".into(),
+            voice: "fake".into(),
+            quality: "low".into(),
+            sample_rate: 16000,
+            onnx_path: PathBuf::from("/nonexistent/model.onnx"),
+            config_path: PathBuf::from("/nonexistent/model.onnx.json"),
+            card_path: None,
+            available: false,
+        };
+        registry.add(entry);
+        assert!(registry.find_for_query("xx").is_none());
+        assert!(registry.find_for_query("fake").is_none());
     }
 
     #[test]

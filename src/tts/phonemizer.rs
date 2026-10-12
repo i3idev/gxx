@@ -452,7 +452,10 @@ pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
         } else if c.is_ascii_alphabetic() {
             "en"
         } else {
-            "neutral"
+            // Any other alphabetic script (Cyrillic, Greek, CJK, ...) gets
+            // its own segment tag so `--auto` can skip it independently
+            // instead of merging it into the previous language.
+            "other"
         }
     }
 
@@ -502,6 +505,22 @@ mod language_tests {
     fn test_detect_language_mixed() {
         assert_eq!(detect_language("hello سلام"), "mixed");
         assert_eq!(detect_language("test دنیا"), "mixed");
+    }
+
+    #[test]
+    fn test_segment_cyrillic_standalone() {
+        // Cyrillic must not merge into adjacent fa/en segments
+        let segs = segment_by_language("hello мир");
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].1, "en");
+        assert_eq!(segs[1].1, "other");
+    }
+
+    #[test]
+    fn test_segment_three_scripts() {
+        let segs = segment_by_language("hello سلام привет");
+        let langs: Vec<&str> = segs.iter().map(|(_, l)| *l).collect();
+        assert_eq!(langs, vec!["en", "fa", "other"]);
     }
 
     #[test]

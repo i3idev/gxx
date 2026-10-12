@@ -362,27 +362,25 @@ fn run_say(args: crate::cli::SayArgs, db_override: Option<&str>) -> Result<(), G
 /// and load its PiperConfig.
 fn load_config_for_voice(query: &str) -> Result<crate::tts::model::PiperConfig, GxxError> {
     let registry = crate::tts::registry::ModelRegistry::discover()?;
-    let q = query.to_lowercase();
-
-    let entry = registry
-        .all()
-        .into_iter()
-        .find(|e| {
-            e.available
-                && (e.language.to_lowercase().starts_with(&q)
-                    || e.voice.to_lowercase() == q
-                    || e.language.to_lowercase() == q)
-        })
-        .ok_or_else(|| {
-            GxxError::msg(format!(
-                "no available model for voice '{}'. run `gxx model list`",
-                query
-            ))
-        })?;
-
+    let entry = registry.find_for_query(query).ok_or_else(|| {
+        GxxError::msg(format!(
+            "no available model for voice '{}'. run `gxx model list`",
+            query
+        ))
+    })?;
     let mut config = crate::tts::model::load_config(&entry.config_path)?;
     config.onnx_path = Some(entry.onnx_path.clone());
     Ok(config)
+}
+
+/// Like [`load_config_for_voice`] but returns `None` instead of erroring
+/// when no model matches. Used by `--auto` to skip unknown-language segments.
+fn try_load_config_for_voice(query: &str) -> Option<crate::tts::model::PiperConfig> {
+    let registry = crate::tts::registry::ModelRegistry::discover().ok()?;
+    let entry = registry.find_for_query(query)?;
+    let mut config = crate::tts::model::load_config(&entry.config_path).ok()?;
+    config.onnx_path = Some(entry.onnx_path.clone());
+    Some(config)
 }
 
 /// Ctrl+C signal flag shared across `read` invocations.
@@ -465,8 +463,22 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                 if stop_flag.load(Ordering::Acquire) {
                     break;
                 }
-                let config = load_config_for_voice(lang)?;
-                crate::tts::say_text(chunk, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
+                match try_load_config_for_voice(lang) {
+                    Some(config) => {
+                        crate::tts::say_text(
+                            chunk,
+                            &config,
+                            make_opts(),
+                            Some(Arc::clone(&stop_flag)),
+                        )?;
+                    }
+                    None => {
+                        eprintln!(
+                            "TTS: warning: no model for '{}', skipping segment {:?}",
+                            lang, chunk
+                        );
+                    }
+                }
             }
         } else if let Some(voice) = args
             .voice
@@ -572,13 +584,24 @@ fn run_paragraph(
         if speakable.is_empty() {
             return Err(GxxError::msg("no speakable text"));
         }
-        let total = speakable.len();
-        for (i, (chunk, lang)) in speakable.iter().enumerate() {
-            let config = load_config_for_voice(lang)?;
-            crate::tts::say_text(chunk, &config, make_opts(), None)?;
-            if i + 1 < total && args.paragraph_pause_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(args.paragraph_pause_ms));
+        let mut spoken = 0usize;
+        for (chunk, lang) in speakable.iter() {
+            match try_load_config_for_voice(lang) {
+                Some(config) => {
+                    crate::tts::say_text(chunk, &config, make_opts(), None)?;
+                    spoken += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(args.paragraph_pause_ms));
+                }
+                None => {
+                    eprintln!(
+                        "TTS: warning: no model for '{}', skipping segment {:?}",
+                        lang, chunk
+                    );
+                }
             }
+        }
+        if spoken == 0 {
+            return Err(GxxError::msg("no segment had a matching model"));
         }
         return Ok(());
     }
