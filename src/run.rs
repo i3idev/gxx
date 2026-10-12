@@ -448,7 +448,14 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
 
         eprintln!("TTS: paragraph {}/{}", start + i + 1, all_paragraphs.len());
 
-        if args.auto {
+        let auto_mode = args.auto
+            || args
+                .voice
+                .as_deref()
+                .map(|v| v.eq_ignore_ascii_case("auto"))
+                .unwrap_or(false);
+
+        if auto_mode {
             let segments = crate::tts::phonemizer::segment_by_language(para);
             let speakable: Vec<(String, &'static str)> = segments
                 .into_iter()
@@ -461,7 +468,11 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                 let config = load_config_for_voice(lang)?;
                 crate::tts::say_text(chunk, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
             }
-        } else if let Some(voice) = args.voice.as_deref() {
+        } else if let Some(voice) = args
+            .voice
+            .as_deref()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"))
+        {
             let config = load_config_for_voice(voice)?;
             crate::tts::say_text(para, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
         } else {
@@ -475,10 +486,39 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
     Ok(())
 }
 
+/// Print a table of discovered models with the active one marked.
+fn print_voice_list() -> Result<(), GxxError> {
+    let registry = crate::tts::registry::ModelRegistry::discover()?;
+    let active_id = crate::tts::registry::load_model_config()
+        .ok()
+        .and_then(|c| c.active_model_id);
+
+    println!(
+        "{:<14} {:<8} {:<8} {:<8} {:<6} ACTIVE",
+        "ID", "LANG", "VOICE", "QUALITY", "SRATE"
+    );
+    for m in registry.all() {
+        let mark = if Some(&m.id) == active_id.as_ref() {
+            "✓"
+        } else {
+            ""
+        };
+        println!(
+            "{:<14} {:<8} {:<8} {:<8} {:<6} {}",
+            m.id, m.language, m.voice, m.quality, m.sample_rate, mark
+        );
+    }
+    Ok(())
+}
+
 fn run_paragraph(
     args: crate::cli::ParagraphArgs,
     _db_override: Option<&str>,
 ) -> Result<(), GxxError> {
+    if args.list_voices {
+        return print_voice_list();
+    }
+
     // 1) gather text
     let text = match (args.text, args.file) {
         (Some(t), None) => t,
@@ -499,9 +539,21 @@ fn run_paragraph(
         volume: args.volume,
     };
 
+    // `--voice auto` is an alias for `--auto`
+    let auto_mode = args.auto
+        || args
+            .voice
+            .as_deref()
+            .map(|v| v.eq_ignore_ascii_case("auto"))
+            .unwrap_or(false);
+
     // 2a) manual IPA path: skip eSpeak and language guard
     if let Some(ipa) = args.phonemes {
-        if let Some(voice) = args.voice.as_deref() {
+        if let Some(voice) = args
+            .voice
+            .as_deref()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"))
+        {
             let config = load_config_for_voice(voice)?;
             crate::tts::say_text_manual(&ipa, &config, make_opts(), None)?;
         } else {
@@ -511,7 +563,7 @@ fn run_paragraph(
     }
 
     // 2a') auto mode: segment by language and use matching model per segment
-    if args.auto {
+    if auto_mode {
         let segments = crate::tts::phonemizer::segment_by_language(&text);
         let speakable: Vec<(String, &'static str)> = segments
             .into_iter()
@@ -532,7 +584,11 @@ fn run_paragraph(
     }
 
     // 2b) voice override path
-    if let Some(voice) = args.voice.as_deref() {
+    if let Some(voice) = args
+        .voice
+        .as_deref()
+        .filter(|v| !v.eq_ignore_ascii_case("auto"))
+    {
         let config = load_config_for_voice(voice)?;
         let paragraphs: Vec<&str> = text
             .split("\n\n")

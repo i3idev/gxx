@@ -407,6 +407,10 @@ pub struct ParagraphArgs {
     /// Pause between paragraphs (milliseconds)
     #[arg(long, value_name = "MS", default_value_t = 300)]
     pub paragraph_pause_ms: u64,
+
+    /// List available voices and exit
+    #[arg(long)]
+    pub list_voices: bool,
 }
 
 #[derive(Args, Debug)]
