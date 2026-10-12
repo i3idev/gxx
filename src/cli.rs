@@ -81,8 +81,6 @@ pub enum Command {
     /// Speak arbitrary text (no DB lookup, no caching by word)
     Paragraph(ParagraphArgs),
 
-    /// Speak arbitrary text (no DB lookup, no caching by word)
-
     /// TTS model management
     #[command(subcommand)]
     Model(ModelCommand),
@@ -366,6 +364,14 @@ pub struct ReadArgs {
     #[arg(long, value_name = "MS", default_value_t = 300)]
     pub pause_ms: u64,
 
+    /// Override Piper length_scale (higher = slower, more deliberate)
+    #[arg(long, value_name = "F32")]
+    pub length_scale: Option<f32>,
+
+    /// Override Piper noise_scale (lower = flatter prosody)
+    #[arg(long, value_name = "F32")]
+    pub noise_scale: Option<f32>,
+
     /// Write output to a WAV file instead of playing
     #[arg(long, value_name = "PATH")]
     pub out: Option<std::path::PathBuf>,
@@ -411,6 +417,14 @@ pub struct ParagraphArgs {
     /// Pause between paragraphs (milliseconds)
     #[arg(long, value_name = "MS", default_value_t = 300)]
     pub paragraph_pause_ms: u64,
+
+    /// Override Piper length_scale (higher = slower, more deliberate)
+    #[arg(long, value_name = "F32")]
+    pub length_scale: Option<f32>,
+
+    /// Override Piper noise_scale (lower = flatter prosody)
+    #[arg(long, value_name = "F32")]
+    pub noise_scale: Option<f32>,
 
     /// Write output to a WAV file instead of playing
     #[arg(long, value_name = "PATH")]

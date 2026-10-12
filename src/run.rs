@@ -92,6 +92,8 @@ pub fn run_clap(
                         speed: 1.0,
                         volume: 1.0,
                         pause_ms: 300,
+                        length_scale: None,
+                        noise_scale: None,
                         out: None,
                         start: None,
                     };
@@ -361,7 +363,24 @@ fn run_say(args: crate::cli::SayArgs, db_override: Option<&str>) -> Result<(), G
 
 /// Find a model by language code ("en", "fa") or voice name ("cori", "amir")
 /// and load its PiperConfig.
-fn load_config_for_voice(query: &str) -> Result<crate::tts::model::PiperConfig, GxxError> {
+fn apply_inference_overrides(
+    config: &mut crate::tts::model::PiperConfig,
+    length_scale: Option<f32>,
+    noise_scale: Option<f32>,
+) {
+    if let Some(v) = length_scale {
+        config.inference.length_scale = v;
+    }
+    if let Some(v) = noise_scale {
+        config.inference.noise_scale = v;
+    }
+}
+
+fn load_config_for_voice(
+    query: &str,
+    length_scale: Option<f32>,
+    noise_scale: Option<f32>,
+) -> Result<crate::tts::model::PiperConfig, GxxError> {
     let registry = crate::tts::registry::ModelRegistry::discover()?;
     let entry = registry.find_for_query(query).ok_or_else(|| {
         GxxError::msg(format!(
@@ -371,16 +390,22 @@ fn load_config_for_voice(query: &str) -> Result<crate::tts::model::PiperConfig, 
     })?;
     let mut config = crate::tts::model::load_config(&entry.config_path)?;
     config.onnx_path = Some(entry.onnx_path.clone());
+    apply_inference_overrides(&mut config, length_scale, noise_scale);
     Ok(config)
 }
 
 /// Like [`load_config_for_voice`] but returns `None` instead of erroring
 /// when no model matches. Used by `--auto` to skip unknown-language segments.
-fn try_load_config_for_voice(query: &str) -> Option<crate::tts::model::PiperConfig> {
+fn try_load_config_for_voice(
+    query: &str,
+    length_scale: Option<f32>,
+    noise_scale: Option<f32>,
+) -> Option<crate::tts::model::PiperConfig> {
     let registry = crate::tts::registry::ModelRegistry::discover().ok()?;
     let entry = registry.find_for_query(query)?;
     let mut config = crate::tts::model::load_config(&entry.config_path).ok()?;
     config.onnx_path = Some(entry.onnx_path.clone());
+    apply_inference_overrides(&mut config, length_scale, noise_scale);
     Some(config)
 }
 
@@ -462,9 +487,9 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
 
         render_chunks_to_wav(&chunks, out, args.pause_ms, |lang| {
             if auto_for_cfg {
-                try_load_config_for_voice(lang)
+                try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
             } else if let Some(ref v) = voice_for_cfg {
-                try_load_config_for_voice(v)
+                try_load_config_for_voice(v, args.length_scale, args.noise_scale)
             } else {
                 crate::tts::registry::get_active_config().ok()
             }
@@ -506,7 +531,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                 if stop_flag.load(Ordering::Acquire) {
                     break;
                 }
-                match try_load_config_for_voice(lang) {
+                match try_load_config_for_voice(lang, args.length_scale, args.noise_scale) {
                     Some(config) => {
                         crate::tts::say_text(
                             chunk,
@@ -528,7 +553,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
             .as_deref()
             .filter(|v| !v.eq_ignore_ascii_case("auto"))
         {
-            let config = load_config_for_voice(voice)?;
+            let config = load_config_for_voice(voice, args.length_scale, args.noise_scale)?;
             crate::tts::say_text(para, &config, make_opts(), Some(Arc::clone(&stop_flag)))?;
         } else {
             crate::tts::say_with_active_model(para, make_opts(), Some(Arc::clone(&stop_flag)))?;
@@ -685,9 +710,9 @@ fn run_paragraph(
             .filter(|v| !v.eq_ignore_ascii_case("auto"));
         render_chunks_to_wav(&chunks, out, args.paragraph_pause_ms, |lang| {
             if auto_for_cfg {
-                try_load_config_for_voice(lang)
+                try_load_config_for_voice(lang, args.length_scale, args.noise_scale)
             } else if let Some(ref v) = voice_for_cfg {
-                try_load_config_for_voice(v)
+                try_load_config_for_voice(v, args.length_scale, args.noise_scale)
             } else {
                 crate::tts::registry::get_active_config().ok()
             }
@@ -717,7 +742,7 @@ fn run_paragraph(
             .as_deref()
             .filter(|v| !v.eq_ignore_ascii_case("auto"))
         {
-            let config = load_config_for_voice(voice)?;
+            let config = load_config_for_voice(voice, args.length_scale, args.noise_scale)?;
             crate::tts::say_text_manual(&ipa, &config, make_opts(), None)?;
         } else {
             crate::tts::say_manual_with_active_model(&ipa, make_opts(), None)?;
@@ -737,7 +762,7 @@ fn run_paragraph(
         }
         let mut spoken = 0usize;
         for (chunk, lang) in speakable.iter() {
-            match try_load_config_for_voice(lang) {
+            match try_load_config_for_voice(lang, args.length_scale, args.noise_scale) {
                 Some(config) => {
                     crate::tts::say_text(chunk, &config, make_opts(), None)?;
                     spoken += 1;
@@ -763,7 +788,7 @@ fn run_paragraph(
         .as_deref()
         .filter(|v| !v.eq_ignore_ascii_case("auto"))
     {
-        let config = load_config_for_voice(voice)?;
+        let config = load_config_for_voice(voice, args.length_scale, args.noise_scale)?;
         let paragraphs: Vec<&str> = text
             .split("\n\n")
             .map(str::trim)
