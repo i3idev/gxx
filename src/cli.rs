@@ -387,6 +387,18 @@ pub struct ReadArgs {
     /// Pause between sentences when --sentence-split is used (ms)
     #[arg(long, value_name = "MS", default_value_t = 150)]
     pub sentence_pause_ms: u64,
+
+    /// Resume from the last saved paragraph for this file
+    #[arg(long)]
+    pub resume: bool,
+
+    /// Auto-save progress after each paragraph
+    #[arg(long)]
+    pub save_progress: bool,
+
+    /// Forget saved progress for this file and exit
+    #[arg(long)]
+    pub clear_progress: bool,
 }
 
 #[derive(Args, Debug)]
@@ -449,6 +461,18 @@ pub struct ParagraphArgs {
     /// Pause between sentences when --sentence-split is used (ms)
     #[arg(long, value_name = "MS", default_value_t = 150)]
     pub sentence_pause_ms: u64,
+
+    /// Resume from the last saved paragraph for this file
+    #[arg(long)]
+    pub resume: bool,
+
+    /// Auto-save progress after each paragraph
+    #[arg(long)]
+    pub save_progress: bool,
+
+    /// Forget saved progress for this file and exit
+    #[arg(long)]
+    pub clear_progress: bool,
 }
 
 #[derive(Args, Debug)]

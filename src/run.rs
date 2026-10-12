@@ -98,6 +98,9 @@ pub fn run_clap(
                         start: None,
                         sentence_split: false,
                         sentence_pause_ms: 150,
+                        resume: false,
+                        save_progress: false,
+                        clear_progress: false,
                     };
                     run_read(read_args, db_override)
                 }
@@ -433,6 +436,12 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
+    if args.clear_progress {
+        clear_progress(&args.file)?;
+        eprintln!("TTS: cleared progress for {}", args.file.display());
+        return Ok(());
+    }
+
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| GxxError::msg(format!("read {}: {}", args.file.display(), e)))?;
 
@@ -442,14 +451,47 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
         return Err(GxxError::msg("file has no readable text"));
     }
 
-    let start = args.start.unwrap_or(1).max(1) - 1;
-    if start >= all_paragraphs.len() {
+    let explicit_start = args.start.unwrap_or(1).max(1);
+    let start_1based = if args.resume {
+        match load_progress(&args.file) {
+            Some(p) if p >= 1 && p <= all_paragraphs.len() => {
+                eprintln!(
+                    "TTS: resuming from paragraph {} (of {})",
+                    p,
+                    all_paragraphs.len()
+                );
+                p
+            }
+            Some(p) if p > all_paragraphs.len() => {
+                eprintln!(
+                    "TTS: already finished ({} of {} paragraphs read). \
+                     use --clear-progress to restart.",
+                    all_paragraphs.len(),
+                    all_paragraphs.len()
+                );
+                return Ok(());
+            }
+            Some(_) | None => {
+                eprintln!(
+                    "TTS: no saved progress for {}, starting from 1",
+                    args.file.display()
+                );
+                1
+            }
+        }
+    } else {
+        explicit_start
+    };
+
+    if start_1based > all_paragraphs.len() {
         return Err(GxxError::msg(format!(
             "start paragraph {} out of range (file has {})",
-            start + 1,
+            start_1based,
             all_paragraphs.len()
         )));
     }
+
+    let start = start_1based - 1;
     let paragraphs = &all_paragraphs[start..];
     let total = paragraphs.len();
 
@@ -557,6 +599,15 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
             }
         }
 
+        if args.save_progress {
+            // Save the *next* paragraph to read, so resume continues after
+            // the last finished one. May exceed the file length, which
+            // signals "finished" on resume.
+            let next = start_1based + i + 1;
+            save_progress(&args.file, next)?;
+            eprintln!("TTS: progress saved at paragraph {}", next);
+        }
+
         if i + 1 < total && args.pause_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(args.pause_ms));
         }
@@ -585,6 +636,60 @@ fn print_voice_list() -> Result<(), GxxError> {
             "{:<14} {:<8} {:<8} {:<8} {:<6} {}",
             m.id, m.language, m.voice, m.quality, m.sample_rate, mark
         );
+    }
+    Ok(())
+}
+
+/// Compute a stable per-file progress key from path + size + mtime.
+/// If the file is replaced or modified, the key changes and old progress
+/// is not reused.
+fn progress_key(file: &std::path::Path) -> Result<String, GxxError> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let meta = std::fs::metadata(file)
+        .map_err(|e| GxxError::msg(format!("stat {}: {}", file.display(), e)))?;
+    let size = meta.len();
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut h = DefaultHasher::new();
+    file.to_string_lossy().hash(&mut h);
+    size.hash(&mut h);
+    mtime.hash(&mut h);
+    Ok(format!("{:x}", h.finish()))
+}
+
+fn progress_path(file: &std::path::Path) -> Result<std::path::PathBuf, GxxError> {
+    let dir = dirs::data_local_dir()
+        .ok_or_else(|| GxxError::msg("no local data dir"))?
+        .join("gxx")
+        .join("progress");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join(format!("{}.txt", progress_key(file)?)))
+}
+
+fn load_progress(file: &std::path::Path) -> Option<usize> {
+    let p = progress_path(file).ok()?;
+    let s = std::fs::read_to_string(&p).ok()?;
+    s.trim().parse::<usize>().ok()
+}
+
+fn save_progress(file: &std::path::Path, paragraph: usize) -> Result<(), GxxError> {
+    let p = progress_path(file)?;
+    std::fs::write(&p, paragraph.to_string())
+        .map_err(|e| GxxError::msg(format!("write progress: {}", e)))?;
+    Ok(())
+}
+
+fn clear_progress(file: &std::path::Path) -> Result<(), GxxError> {
+    let p = progress_path(file)?;
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(|e| GxxError::msg(format!("remove progress: {}", e)))?;
     }
     Ok(())
 }
