@@ -41,6 +41,8 @@ pub struct ModelEntry {
     pub default_length_scale: Option<f32>,
     /// Optional default noise_scale from MODEL_CARD
     pub default_noise_scale: Option<f32>,
+    /// Optional default noise_w from MODEL_CARD
+    pub default_noise_w: Option<f32>,
 }
 
 /// Model registry containing all discovered models.
@@ -203,6 +205,7 @@ fn parse_model_entry(onnx_path: &Path) -> Option<ModelEntry> {
         default_vowel_stretch: card.as_ref().and_then(|c| c.default_vowel_stretch),
         default_length_scale: card.as_ref().and_then(|c| c.default_length_scale),
         default_noise_scale: card.as_ref().and_then(|c| c.default_noise_scale),
+        default_noise_w: card.as_ref().and_then(|c| c.default_noise_w),
     })
 }
 
@@ -213,6 +216,7 @@ struct ModelCardInfo {
     default_vowel_stretch: Option<u32>,
     default_length_scale: Option<f32>,
     default_noise_scale: Option<f32>,
+    default_noise_w: Option<f32>,
 }
 
 fn parse_model_card(content: &str) -> ModelCardInfo {
@@ -221,6 +225,7 @@ fn parse_model_card(content: &str) -> ModelCardInfo {
     let mut default_vowel_stretch = None;
     let mut default_length_scale = None;
     let mut default_noise_scale = None;
+    let mut default_noise_w = None;
 
     for line in content.lines() {
         let line = line.trim();
@@ -234,6 +239,8 @@ fn parse_model_card(content: &str) -> ModelCardInfo {
             default_length_scale = v.trim().parse::<f32>().ok();
         } else if let Some(v) = line.strip_prefix("* NoiseScale:") {
             default_noise_scale = v.trim().parse::<f32>().ok();
+        } else if let Some(v) = line.strip_prefix("* NoiseW:") {
+            default_noise_w = v.trim().parse::<f32>().ok();
         }
     }
 
@@ -243,6 +250,7 @@ fn parse_model_card(content: &str) -> ModelCardInfo {
         default_vowel_stretch,
         default_length_scale,
         default_noise_scale,
+        default_noise_w,
     }
 }
 
@@ -446,6 +454,7 @@ mod tests {
             default_vowel_stretch: None,
             default_length_scale: None,
             default_noise_scale: None,
+            default_noise_w: None,
         };
         registry.add(entry);
         assert!(registry.find_for_query("xx").is_none());

@@ -94,6 +94,7 @@ pub fn run_clap(
                         pause_ms: 300,
                         length_scale: None,
                         noise_scale: None,
+                        noise_w: None,
                         vowel_stretch: None,
                         out: None,
                         start: None,
@@ -373,6 +374,7 @@ fn apply_inference_overrides(
     config: &mut crate::tts::model::PiperConfig,
     length_scale: Option<f32>,
     noise_scale: Option<f32>,
+    noise_w: Option<f32>,
     vowel_stretch: Option<u32>,
 ) {
     if let Some(v) = length_scale {
@@ -380,6 +382,9 @@ fn apply_inference_overrides(
     }
     if let Some(v) = noise_scale {
         config.inference.noise_scale = v;
+    }
+    if let Some(v) = noise_w {
+        config.inference.noise_w = v;
     }
     if let Some(v) = vowel_stretch {
         config.vowel_stretch = v.min(3);
@@ -393,6 +398,7 @@ fn apply_model_card_defaults(
     entry: &crate::tts::registry::ModelEntry,
     length_scale_override: Option<f32>,
     noise_scale_override: Option<f32>,
+    noise_w_override: Option<f32>,
     vowel_stretch_override: Option<u32>,
 ) {
     if length_scale_override.is_none() {
@@ -403,6 +409,11 @@ fn apply_model_card_defaults(
     if noise_scale_override.is_none() {
         if let Some(v) = entry.default_noise_scale {
             config.inference.noise_scale = v;
+        }
+    }
+    if noise_w_override.is_none() {
+        if let Some(v) = entry.default_noise_w {
+            config.inference.noise_w = v;
         }
     }
     if vowel_stretch_override.is_none() {
@@ -416,6 +427,7 @@ fn load_config_for_voice(
     query: &str,
     length_scale: Option<f32>,
     noise_scale: Option<f32>,
+    noise_w: Option<f32>,
     vowel_stretch: Option<u32>,
 ) -> Result<crate::tts::model::PiperConfig, GxxError> {
     let registry = crate::tts::registry::ModelRegistry::discover()?;
@@ -427,8 +439,21 @@ fn load_config_for_voice(
     })?;
     let mut config = crate::tts::model::load_config(&entry.config_path)?;
     config.onnx_path = Some(entry.onnx_path.clone());
-    apply_model_card_defaults(&mut config, entry, length_scale, noise_scale, vowel_stretch);
-    apply_inference_overrides(&mut config, length_scale, noise_scale, vowel_stretch);
+    apply_model_card_defaults(
+        &mut config,
+        entry,
+        length_scale,
+        noise_scale,
+        noise_w,
+        vowel_stretch,
+    );
+    apply_inference_overrides(
+        &mut config,
+        length_scale,
+        noise_scale,
+        noise_w,
+        vowel_stretch,
+    );
     Ok(config)
 }
 
@@ -438,14 +463,28 @@ fn try_load_config_for_voice(
     query: &str,
     length_scale: Option<f32>,
     noise_scale: Option<f32>,
+    noise_w: Option<f32>,
     vowel_stretch: Option<u32>,
 ) -> Option<crate::tts::model::PiperConfig> {
     let registry = crate::tts::registry::ModelRegistry::discover().ok()?;
     let entry = registry.find_for_query(query)?;
     let mut config = crate::tts::model::load_config(&entry.config_path).ok()?;
     config.onnx_path = Some(entry.onnx_path.clone());
-    apply_model_card_defaults(&mut config, entry, length_scale, noise_scale, vowel_stretch);
-    apply_inference_overrides(&mut config, length_scale, noise_scale, vowel_stretch);
+    apply_model_card_defaults(
+        &mut config,
+        entry,
+        length_scale,
+        noise_scale,
+        noise_w,
+        vowel_stretch,
+    );
+    apply_inference_overrides(
+        &mut config,
+        length_scale,
+        noise_scale,
+        noise_w,
+        vowel_stretch,
+    );
     Some(config)
 }
 
@@ -558,6 +597,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                     lang,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else if let Some(ref v) = voice_for_cfg {
@@ -565,6 +605,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                     v,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else {
@@ -624,6 +665,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                     lang,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else if let Some(ref v) = voice_for_cfg {
@@ -631,6 +673,7 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
                     v,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else {
@@ -678,8 +721,8 @@ fn print_voice_list() -> Result<(), GxxError> {
         .and_then(|c| c.active_model_id);
 
     println!(
-        "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} ACTIVE",
-        "ID", "LANG", "VOICE", "QUALITY", "SRATE", "STRETCH", "LS", "NS"
+        "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {:<6} ACTIVE",
+        "ID", "LANG", "VOICE", "QUALITY", "SRATE", "STRETCH", "LS", "NS", "NW"
     );
     for m in registry.all() {
         let mark = if Some(&m.id) == active_id.as_ref() {
@@ -699,9 +742,13 @@ fn print_voice_list() -> Result<(), GxxError> {
             .default_noise_scale
             .map(|v| format!("{:.2}", v))
             .unwrap_or_else(|| "-".into());
+        let nw = m
+            .default_noise_w
+            .map(|v| format!("{:.2}", v))
+            .unwrap_or_else(|| "-".into());
         println!(
-            "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {}",
-            m.id, m.language, m.voice, m.quality, m.sample_rate, stretch, ls, ns, mark
+            "{:<14} {:<8} {:<8} {:<8} {:<6} {:<8} {:<6} {:<6} {:<6} {}",
+            m.id, m.language, m.voice, m.quality, m.sample_rate, stretch, ls, ns, nw, mark
         );
     }
     Ok(())
@@ -954,6 +1001,7 @@ fn run_paragraph(
                     lang,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else if let Some(ref v) = voice_for_cfg {
@@ -961,6 +1009,7 @@ fn run_paragraph(
                     v,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else {
@@ -1009,6 +1058,7 @@ fn run_paragraph(
                     lang,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else if let Some(ref v) = voice_for_cfg {
@@ -1016,6 +1066,7 @@ fn run_paragraph(
                     v,
                     args.length_scale,
                     args.noise_scale,
+                    args.noise_w,
                     args.vowel_stretch,
                 )
             } else {
@@ -1047,6 +1098,7 @@ fn run_paragraph(
                 voice,
                 args.length_scale,
                 args.noise_scale,
+                args.noise_w,
                 args.vowel_stretch,
             )?;
             crate::tts::say_text_manual(&ipa, &config, make_opts(), None)?;
@@ -1072,6 +1124,7 @@ fn run_paragraph(
                 lang,
                 args.length_scale,
                 args.noise_scale,
+                args.noise_w,
                 args.vowel_stretch,
             ) {
                 Some(config) => {
@@ -1103,6 +1156,7 @@ fn run_paragraph(
             voice,
             args.length_scale,
             args.noise_scale,
+            args.noise_w,
             args.vowel_stretch,
         )?;
         let paragraphs = split_paragraphs(&text);
