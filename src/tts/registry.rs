@@ -34,6 +34,13 @@ pub struct ModelEntry {
     pub card_path: Option<PathBuf>,
     /// Whether the model files currently exist on disk
     pub available: bool,
+
+    /// Optional default VowelStretch from MODEL_CARD
+    pub default_vowel_stretch: Option<u32>,
+    /// Optional default length_scale from MODEL_CARD
+    pub default_length_scale: Option<f32>,
+    /// Optional default noise_scale from MODEL_CARD
+    pub default_noise_scale: Option<f32>,
 }
 
 /// Model registry containing all discovered models.
@@ -149,13 +156,20 @@ fn parse_model_entry(onnx_path: &Path) -> Option<ModelEntry> {
     let filename_quality = parts.get(2).copied().unwrap_or("unknown").to_string();
 
     let card_path = onnx_path.parent()?.join("MODEL_CARD");
-    let (card_language, card_quality) = if card_path.exists() {
+    let card = if card_path.exists() {
         let card_content = fs::read_to_string(&card_path).ok()?;
-        let (_, language, _, quality) = parse_model_card(&card_content);
-        (language, quality)
+        Some(parse_model_card(&card_content))
     } else {
-        ("unknown".to_string(), "unknown".to_string())
+        None
     };
+    let card_language = card
+        .as_ref()
+        .map(|c| c.language.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let card_quality = card
+        .as_ref()
+        .map(|c| c.quality.clone())
+        .unwrap_or_else(|| "unknown".to_string());
 
     let language = if card_language == "unknown" {
         filename_language
@@ -186,35 +200,50 @@ fn parse_model_entry(onnx_path: &Path) -> Option<ModelEntry> {
             None
         },
         available: onnx_path.exists() && config_path.exists(),
+        default_vowel_stretch: card.as_ref().and_then(|c| c.default_vowel_stretch),
+        default_length_scale: card.as_ref().and_then(|c| c.default_length_scale),
+        default_noise_scale: card.as_ref().and_then(|c| c.default_noise_scale),
     })
 }
 
 /// Parse MODEL_CARD content for metadata.
-fn parse_model_card(content: &str) -> (String, String, String, String) {
+struct ModelCardInfo {
+    language: String,
+    quality: String,
+    default_vowel_stretch: Option<u32>,
+    default_length_scale: Option<f32>,
+    default_noise_scale: Option<f32>,
+}
+
+fn parse_model_card(content: &str) -> ModelCardInfo {
     let mut language = "unknown".to_string();
-    let voice = "unknown".to_string();
     let mut quality = "unknown".to_string();
+    let mut default_vowel_stretch = None;
+    let mut default_length_scale = None;
+    let mut default_noise_scale = None;
 
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("* Language:") {
-            let value = line.trim_start_matches("* Language:").trim();
-            language = value
-                .split_whitespace()
-                .next()
-                .unwrap_or("unknown")
-                .to_string();
-        } else if line.starts_with("* Quality:") {
-            quality = line.trim_start_matches("* Quality:").trim().to_string();
+        if let Some(v) = line.strip_prefix("* Language:") {
+            language = v.split_whitespace().next().unwrap_or("unknown").to_string();
+        } else if let Some(v) = line.strip_prefix("* Quality:") {
+            quality = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("* VowelStretch:") {
+            default_vowel_stretch = v.trim().parse::<u32>().ok();
+        } else if let Some(v) = line.strip_prefix("* LengthScale:") {
+            default_length_scale = v.trim().parse::<f32>().ok();
+        } else if let Some(v) = line.strip_prefix("* NoiseScale:") {
+            default_noise_scale = v.trim().parse::<f32>().ok();
         }
     }
 
-    // Extract voice from quality line or filename
-    // The MODEL_CARD doesn't explicitly have voice, so we'll use a heuristic
-    // or just use the directory name
-    let name = format!("{} ({})", voice, language);
-
-    (name, language, voice, quality)
+    ModelCardInfo {
+        language,
+        quality,
+        default_vowel_stretch,
+        default_length_scale,
+        default_noise_scale,
+    }
 }
 
 /// Generate a stable model ID from the ONNX file path.
@@ -414,6 +443,9 @@ mod tests {
             config_path: PathBuf::from("/nonexistent/model.onnx.json"),
             card_path: None,
             available: false,
+            default_vowel_stretch: None,
+            default_length_scale: None,
+            default_noise_scale: None,
         };
         registry.add(entry);
         assert!(registry.find_for_query("xx").is_none());

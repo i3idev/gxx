@@ -386,6 +386,32 @@ fn apply_inference_overrides(
     }
 }
 
+/// Apply MODEL_CARD defaults for a model, only where the caller did not
+/// provide an explicit override.
+fn apply_model_card_defaults(
+    config: &mut crate::tts::model::PiperConfig,
+    entry: &crate::tts::registry::ModelEntry,
+    length_scale_override: Option<f32>,
+    noise_scale_override: Option<f32>,
+    vowel_stretch_override: Option<u32>,
+) {
+    if length_scale_override.is_none() {
+        if let Some(v) = entry.default_length_scale {
+            config.inference.length_scale = v;
+        }
+    }
+    if noise_scale_override.is_none() {
+        if let Some(v) = entry.default_noise_scale {
+            config.inference.noise_scale = v;
+        }
+    }
+    if vowel_stretch_override.is_none() {
+        if let Some(v) = entry.default_vowel_stretch {
+            config.vowel_stretch = v.min(3);
+        }
+    }
+}
+
 fn load_config_for_voice(
     query: &str,
     length_scale: Option<f32>,
@@ -401,6 +427,7 @@ fn load_config_for_voice(
     })?;
     let mut config = crate::tts::model::load_config(&entry.config_path)?;
     config.onnx_path = Some(entry.onnx_path.clone());
+    apply_model_card_defaults(&mut config, entry, length_scale, noise_scale, vowel_stretch);
     apply_inference_overrides(&mut config, length_scale, noise_scale, vowel_stretch);
     Ok(config)
 }
@@ -417,6 +444,7 @@ fn try_load_config_for_voice(
     let entry = registry.find_for_query(query)?;
     let mut config = crate::tts::model::load_config(&entry.config_path).ok()?;
     config.onnx_path = Some(entry.onnx_path.clone());
+    apply_model_card_defaults(&mut config, entry, length_scale, noise_scale, vowel_stretch);
     apply_inference_overrides(&mut config, length_scale, noise_scale, vowel_stretch);
     Some(config)
 }
