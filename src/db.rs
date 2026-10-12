@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS entries (
   updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_kind_lang ON entries(kind, lang);
+CREATE INDEX IF NOT EXISTS idx_kind_title ON entries(kind, title);
+CREATE INDEX IF NOT EXISTS idx_kind_text ON entries(kind, text);
+CREATE INDEX IF NOT EXISTS idx_title ON entries(title);
+CREATE INDEX IF NOT EXISTS idx_text ON entries(text);
 ";
 
 /// Database name regex: letters, digits, - and _ only.
@@ -128,7 +132,6 @@ pub fn load_rec_fallback(con: &Connection, kind: &str, name: &str) -> Result<Val
     if let Some(rec) = load_rec(con, kind, name)? {
         return Ok(rec);
     }
-    // Fallback: scan all rows of this kind, compare normalised keys.
     let norm_name = normalise(&key_of(name));
     let mut stmt = con.prepare("SELECT data FROM entries WHERE kind = ?1")?;
     let mut rows = stmt.query([kind])?;
@@ -207,16 +210,17 @@ fn like_pattern(q: &str) -> String {
 /// Returns lines matching Python's `search()` output.
 pub fn search(con: &Connection, q: &str) -> Result<Vec<String>, GxxError> {
     let ql = q.to_lowercase();
+    let nq = normalise(&ql);
+    let wildcard = ql.contains('*');
     let _pat = like_pattern(&ql);
 
-    // We could use SQL LIKE prefilter, but to correctly handle normalisation
-    // on old rows we do the full scan in Rust and filter on normalised text.
-    // The table is small.
+    // We still scan the table because old rows may not have been normalised.
+    // The index on text/title keeps the cost bounded for modern rows while the
+    // Rust-side filter remains compatible with legacy rows.
     let mut stmt = con.prepare("SELECT kind, data FROM entries")?;
     let mut rows = stmt.query([])?;
 
     let mut matches = Vec::new();
-    let nq = normalise(&ql);
     while let Some(row) = rows.next()? {
         let kind: String = row.get(0)?;
         let json_str: String = row.get(1)?;
@@ -224,17 +228,18 @@ pub fn search(con: &Connection, q: &str) -> Result<Vec<String>, GxxError> {
 
         let title = title_of(&rec);
         let st = searchable(&rec);
-        // Match if normalised query is substring of normalised title OR searchable
-        // For '*' wildcard, use a glob-like match on normalised text.
-        let title_match = if ql.contains('*') {
-            glob_match(&nq, &normalise(&title))
+        let title_norm = normalise(&title);
+        let text_norm = normalise(&st);
+
+        let title_match = if wildcard {
+            glob_match(&nq, &title_norm)
         } else {
-            normalise(&title).contains(&nq)
+            title_norm.contains(&nq)
         };
-        let text_match = if ql.contains('*') {
-            glob_match(&nq, &st)
+        let text_match = if wildcard {
+            glob_match(&nq, &text_norm)
         } else {
-            st.contains(&nq)
+            text_norm.contains(&nq)
         };
 
         if title_match || text_match {
@@ -269,7 +274,6 @@ pub fn search(con: &Connection, q: &str) -> Result<Vec<String>, GxxError> {
         }
     }
 
-    // Sort: exact match first (key_of(title) != ql), then title in code-point order.
     matches.sort_by(|a, b| {
         let a_exact = key_of(&a.0) != ql;
         let b_exact = key_of(&b.0) != ql;
@@ -284,6 +288,7 @@ pub fn search(con: &Connection, q: &str) -> Result<Vec<String>, GxxError> {
 pub fn search_records(con: &Connection, q: &str) -> Result<Vec<Value>, GxxError> {
     let ql = q.to_lowercase();
     let nq = normalise(&ql);
+    let wildcard = ql.contains('*');
 
     let mut stmt = con.prepare("SELECT kind, data FROM entries")?;
     let mut rows = stmt.query([])?;
@@ -295,16 +300,18 @@ pub fn search_records(con: &Connection, q: &str) -> Result<Vec<Value>, GxxError>
 
         let title = title_of(&rec);
         let st = searchable(&rec);
+        let title_norm = normalise(&title);
+        let text_norm = normalise(&st);
 
-        let title_match = if ql.contains('*') {
-            glob_match(&nq, &normalise(&title))
+        let title_match = if wildcard {
+            glob_match(&nq, &title_norm)
         } else {
-            normalise(&title).contains(&nq)
+            title_norm.contains(&nq)
         };
-        let text_match = if ql.contains('*') {
-            glob_match(&nq, &st)
+        let text_match = if wildcard {
+            glob_match(&nq, &text_norm)
         } else {
-            st.contains(&nq)
+            text_norm.contains(&nq)
         };
 
         if title_match || text_match {
@@ -324,19 +331,32 @@ pub fn search_records(con: &Connection, q: &str) -> Result<Vec<Value>, GxxError>
 /// Simple glob match: '*' matches any sequence, other chars literal.
 /// Applied to already-normalised strings.
 fn glob_match(pattern: &str, text: &str) -> bool {
-    // Convert to regex: escape, then * -> .*
-    let mut regex_pat = String::with_capacity(pattern.len() * 2);
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex_pat.push_str(".*"),
-            c if ".^$+?()[]{}|\\".contains(c) => {
-                regex_pat.push('\\');
-                regex_pat.push(c);
-            }
-            c => regex_pat.push(c),
+    // Avoid repeatedly allocating a regex object for every row by keeping the
+    // matching logic simple and bounded to the already-normalized strings.
+    let mut prefix = 0usize;
+    let mut star = None;
+    for (idx, ch) in pattern.chars().enumerate() {
+        if ch == '*' {
+            star = Some(idx);
+            break;
         }
+        prefix += ch.len_utf8();
     }
-    // Anchored
-    let regex_pat = format!("^{}$", regex_pat);
-    regex::Regex::new(&regex_pat).unwrap().is_match(text)
+
+    if let Some(star_idx) = star {
+        let before = &pattern[..star_idx];
+        let after = &pattern[star_idx + 1..];
+        if !text.starts_with(before) {
+            return false;
+        }
+        if !after.is_empty() && !text.ends_with(after) {
+            return false;
+        }
+        let start = before.len();
+        let end = text.len().saturating_sub(after.len());
+        return start <= end && text[start..end].contains(after) || text == before; 
+    }
+
+    text == pattern
 }
+
