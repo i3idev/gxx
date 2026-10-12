@@ -366,6 +366,10 @@ pub struct ReadArgs {
     #[arg(long, value_name = "MS", default_value_t = 300)]
     pub pause_ms: u64,
 
+    /// Write output to a WAV file instead of playing
+    #[arg(long, value_name = "PATH")]
+    pub out: Option<std::path::PathBuf>,
+
     /// Start from paragraph N (1-based)
     #[arg(long, value_name = "N")]
     pub start: Option<usize>,
@@ -407,6 +411,10 @@ pub struct ParagraphArgs {
     /// Pause between paragraphs (milliseconds)
     #[arg(long, value_name = "MS", default_value_t = 300)]
     pub paragraph_pause_ms: u64,
+
+    /// Write output to a WAV file instead of playing
+    #[arg(long, value_name = "PATH")]
+    pub out: Option<std::path::PathBuf>,
 
     /// List available voices and exit
     #[arg(long)]

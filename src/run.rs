@@ -92,6 +92,7 @@ pub fn run_clap(
                         speed: 1.0,
                         volume: 1.0,
                         pause_ms: 300,
+                        out: None,
                         start: None,
                     };
                     run_read(read_args, db_override)
@@ -429,6 +430,48 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
     let paragraphs = &all_paragraphs[start..];
     let total = paragraphs.len();
 
+    // --out: render all paragraphs to WAV instead of playing
+    if let Some(out) = args.out.as_deref() {
+        let auto_for_cfg = args.auto
+            || args
+                .voice
+                .as_deref()
+                .map(|v| v.eq_ignore_ascii_case("auto"))
+                .unwrap_or(false);
+        let voice_for_cfg = args
+            .voice
+            .clone()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"));
+
+        // each paragraph may itself be language-segmented
+        let mut chunks: Vec<(String, String)> = Vec::new();
+        for para in paragraphs {
+            if auto_for_cfg {
+                let segs = crate::tts::phonemizer::segment_by_language(para);
+                chunks.extend(
+                    segs.into_iter()
+                        .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
+                        .map(|(t, l)| (t, l.to_string())),
+                );
+            } else if voice_for_cfg.is_some() {
+                chunks.push(((*para).to_string(), "voiced".to_string()));
+            } else {
+                chunks.push(((*para).to_string(), "active".to_string()));
+            }
+        }
+
+        render_chunks_to_wav(&chunks, out, args.pause_ms, |lang| {
+            if auto_for_cfg {
+                try_load_config_for_voice(lang)
+            } else if let Some(ref v) = voice_for_cfg {
+                try_load_config_for_voice(v)
+            } else {
+                crate::tts::registry::get_active_config().ok()
+            }
+        })?;
+        return Ok(());
+    }
+
     let stop_flag = get_read_stop_flag();
     stop_flag.store(false, Ordering::Release);
 
@@ -523,6 +566,71 @@ fn print_voice_list() -> Result<(), GxxError> {
     Ok(())
 }
 
+/// Render a list of pre-split (text, config) chunks into a single WAV file.
+///
+/// - Synthesizes each chunk without playing.
+/// - Inserts `pause_ms` silence between chunks.
+/// - Errors if two chunks have different sample rates.
+/// - `config_for` decides which model to use per chunk (returns None to skip).
+fn render_chunks_to_wav<F>(
+    chunks: &[(String, String)],
+    out: &std::path::Path,
+    pause_ms: u64,
+    config_for: F,
+) -> Result<usize, GxxError>
+where
+    F: Fn(&str) -> Option<crate::tts::model::PiperConfig>,
+{
+    use crate::tts::audio::write_wav;
+
+    let mut all_samples: Vec<f32> = Vec::new();
+    let mut sample_rate: Option<u32> = None;
+    let mut spoken = 0usize;
+
+    for (chunk, lang) in chunks {
+        let config = match config_for(lang.as_str()) {
+            Some(c) => c,
+            None => {
+                eprintln!(
+                    "TTS: warning: no model for '{}', skipping segment {:?}",
+                    lang, chunk
+                );
+                continue;
+            }
+        };
+        let rate = config.audio.sample_rate;
+        match sample_rate {
+            None => sample_rate = Some(rate),
+            Some(r) if r != rate => {
+                return Err(GxxError::msg(format!(
+                    "cannot concatenate segments with different sample rates: {} vs {}",
+                    r, rate
+                )));
+            }
+            _ => {}
+        }
+        let samples = crate::tts::synthesize_text(chunk, &config)?;
+        if spoken > 0 && pause_ms > 0 {
+            let silence_len = (rate as u64 * pause_ms / 1000) as usize;
+            all_samples.extend(std::iter::repeat(0.0f32).take(silence_len));
+        }
+        all_samples.extend(samples);
+        spoken += 1;
+    }
+
+    let rate = sample_rate.ok_or_else(|| GxxError::msg("no segment had a matching model"))?;
+    let wav = write_wav(&all_samples, rate)?;
+    std::fs::write(out, wav)
+        .map_err(|e| GxxError::msg(format!("write {}: {}", out.display(), e)))?;
+    eprintln!(
+        "TTS: wrote {} ({} samples, {} Hz)",
+        out.display(),
+        all_samples.len(),
+        rate
+    );
+    Ok(spoken)
+}
+
 fn run_paragraph(
     args: crate::cli::ParagraphArgs,
     _db_override: Option<&str>,
@@ -532,9 +640,9 @@ fn run_paragraph(
     }
 
     // 1) gather text
-    let text = match (args.text, args.file) {
-        (Some(t), None) => t,
-        (None, Some(p)) => std::fs::read_to_string(&p)
+    let text = match (args.text.as_deref(), args.file.as_deref()) {
+        (Some(t), None) => t.to_string(),
+        (None, Some(p)) => std::fs::read_to_string(p)
             .map_err(|e| GxxError::msg(format!("read {}: {}", p.display(), e)))?,
         (Some(_), Some(_)) => {
             return Err(GxxError::msg("give text OR --file, not both"));
@@ -543,6 +651,49 @@ fn run_paragraph(
             return Err(GxxError::msg("no text and no --file"));
         }
     };
+
+    // --out: render to WAV instead of playing
+    if let Some(out) = args.out.as_deref() {
+        let auto_mode = args.auto
+            || args
+                .voice
+                .as_deref()
+                .map(|v| v.eq_ignore_ascii_case("auto"))
+                .unwrap_or(false);
+
+        let chunks: Vec<(String, String)> = if auto_mode {
+            let segs = crate::tts::phonemizer::segment_by_language(&text);
+            segs.into_iter()
+                .filter(|(t, lang)| *lang != "neutral" && !t.trim().is_empty())
+                .map(|(t, l)| (t, l.to_string()))
+                .collect()
+        } else if let Some(v) = args
+            .voice
+            .as_deref()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"))
+        {
+            vec![(text.clone(), v.to_string())]
+        } else {
+            // use active model
+            vec![(text.clone(), "active".to_string())]
+        };
+
+        let auto_for_cfg = auto_mode;
+        let voice_for_cfg = args
+            .voice
+            .clone()
+            .filter(|v| !v.eq_ignore_ascii_case("auto"));
+        render_chunks_to_wav(&chunks, out, args.paragraph_pause_ms, |lang| {
+            if auto_for_cfg {
+                try_load_config_for_voice(lang)
+            } else if let Some(ref v) = voice_for_cfg {
+                try_load_config_for_voice(v)
+            } else {
+                crate::tts::registry::get_active_config().ok()
+            }
+        })?;
+        return Ok(());
+    }
 
     // helper to build fresh options (PlaybackOptions may not be Clone)
     let make_opts = || crate::tts::PlaybackOptions {
