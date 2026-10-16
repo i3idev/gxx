@@ -7,13 +7,17 @@ use clap::{Args, Parser, Subcommand};
     name = "gxx",
     version,
     about = "Bilingual (English / Persian) word and grammar notebook",
-    long_about = "gxx - A CLI tool for managing bilingual vocabulary and grammar notes.\nStores data in SQLite databases under ~/.gxx/db/.",
+    long_about = "gxx - A CLI tool for managing bilingual vocabulary and grammar notes.\nStores data in SQLite databases under ~/.gxx/db/ or ./.gxx/db/.",
     allow_hyphen_values = true
 )]
 pub struct Cli {
     /// Database to use for this command (overrides active database)
     #[arg(long, global = true, value_name = "NAME")]
     pub db: Option<String>,
+
+    /// Path to vault folder (project root) containing .gxx/ data
+    #[arg(long, short = 'v', global = true, value_name = "PATH")]
+    pub vault: Option<String>,
 
     /// Output as JSON
     #[arg(long, global = true)]

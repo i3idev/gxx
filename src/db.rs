@@ -1,11 +1,32 @@
 //! SQLite access: open, schema, load/save entry, search.
 
+use once_cell::sync::Lazy;
 use rusqlite::Connection;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::error::GxxError;
 use crate::model::{entry_id, key_of, lang_of, normalise, now, searchable, title_of};
+
+static VAULT: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
+
+pub fn set_vault(vault: Option<&str>) {
+    let mut v = VAULT.lock().unwrap();
+    *v = vault.map(|x| PathBuf::from(x).canonicalize().unwrap_or_else(|_| PathBuf::from(x)));
+}
+
+fn vault_dir() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(v) = std::env::var("GXX_VAULT") {
+        if !v.is_empty() {
+            return Some(PathBuf::from(v));
+        }
+    }
+    // Check thread-local/global override
+    let v = VAULT.lock().unwrap();
+    v.clone()
+}
 
 /// Schema SQL for the entries table.
 pub const SCHEMA: &str = "
@@ -26,8 +47,13 @@ CREATE INDEX IF NOT EXISTS idx_kind_lang ON entries(kind, lang);
 /// Database name regex: letters, digits, - and _ only.
 pub const DB_NAME_RE: &str = r"^[\w-]+$";
 
-/// Home directory: GXX_HOME env or ~/.gxx
+/// Home directory: GXX_HOME env or ~/.gxx or vault/.gxx
 pub fn home_dir() -> PathBuf {
+    // If vault is specified (via --vault or GXX_VAULT), use vault/.gxx
+    if let Some(mut v) = vault_dir() {
+        v.push(".gxx");
+        return v;
+    }
     std::env::var_os("GXX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {

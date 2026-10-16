@@ -26,7 +26,7 @@ pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
 
     // Handle subcommand
     if let Some(cmd) = cli.command {
-        run_clap(cmd, cli.db.as_deref(), cli.json)
+        run_clap(cmd, cli.db.as_deref(), cli.vault.as_deref(), cli.json)
     } else {
         // No subcommand - could be direct word lookup
         print_usage();
@@ -38,8 +38,12 @@ pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
 pub fn run_clap(
     cmd: Command,
     db_override: Option<&str>,
+    vault_override: Option<&str>,
     json_output: bool,
 ) -> Result<(), GxxError> {
+    if let Some(v) = vault_override {
+        crate::db::set_vault(Some(v));
+    }
     match cmd {
         Command::Init => cmd_init(),
         Command::Db(sub) => run_db(sub, db_override),
