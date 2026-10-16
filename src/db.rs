@@ -13,7 +13,11 @@ static VAULT: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
 pub fn set_vault(vault: Option<&str>) {
     let mut v = VAULT.lock().unwrap();
-    *v = vault.map(|x| PathBuf::from(x).canonicalize().unwrap_or_else(|_| PathBuf::from(x)));
+    *v = vault.map(|x| {
+        PathBuf::from(x)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(x))
+    });
 }
 
 fn vault_dir() -> Option<PathBuf> {

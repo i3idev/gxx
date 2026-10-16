@@ -253,6 +253,10 @@ pub struct ExArgs {
     /// Example number to set/remove
     #[arg(short, long, value_name = "N")]
     pub number: Option<usize>,
+
+    /// Delete the specified example (requires --number)
+    #[arg(long, requires = "number")]
+    pub delete: bool,
 }
 
 #[derive(Args, Debug)]

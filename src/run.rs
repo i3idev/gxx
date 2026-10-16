@@ -273,9 +273,23 @@ fn run_syn_ant(
 fn run_ex(args: crate::cli::ExArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
-    if let Some(n) = args.number {
+
+    if args.delete {
+        let n = args
+            .number
+            .ok_or_else(|| GxxError::msg("--delete requires --number N"))?;
+
+        if !args.texts.is_empty() {
+            return Err(GxxError::msg(
+                "--delete cannot be combined with example text",
+            ));
+        }
+
+        argv.push(format!("-{n}"));
+    } else if let Some(n) = args.number {
         argv.push(n.to_string());
     }
+
     argv.extend(args.texts);
     cmd_ex_word(&con, &argv)
 }
