@@ -1,9 +1,13 @@
 //! Audio playback with speed and volume control.
-//! Uses system commands (pw-play/play) for playback to avoid ALSA dependency.
 //!
-//! Playback can be cancelled by passing a stop signal (`Arc<AtomicBool>`).
-//! When the signal is set to `true`, the child audio process is killed
-//! and `play_audio` returns `Ok(())` immediately, allowing true pause/resume.
+//! Uses system commands (`pw-play`, `play`, `paplay`, `aplay`) for
+//! playback to avoid an ALSA dependency. WAV data is piped to the
+//! player's stdin.
+//!
+//! Playback can be cancelled by passing a stop signal
+//! (`Arc<AtomicBool>`). When the signal is set to `true`, the child
+//! audio process is killed and `play_audio` returns `Ok(())`
+//! immediately, enabling true pause/resume.
 
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,7 +17,9 @@ use std::time::Duration;
 
 use crate::error::GxxError;
 
-/// Playback options
+/// Playback options.
+///
+/// `repeat` is 1-10, `speed` is 0.1-2.0, `volume` is 0.1-2.0.
 #[derive(Debug, Clone, Copy)]
 pub struct PlaybackOptions {
     pub repeat: u32,
@@ -31,12 +37,19 @@ impl Default for PlaybackOptions {
     }
 }
 
-/// Play audio samples with the given options using a system audio player.
-/// This function blocks until playback completes.
+/// Play audio samples with the given options using a system audio
+/// player. This function blocks until playback completes.
 ///
-/// If `stop_flag` is `Some`, it is checked periodically. When set to `true`,
-/// the audio playback is killed immediately and the function returns early.
-/// This enables pause/resume functionality.
+/// If `stop_flag` is `Some`, it is checked periodically. When set to
+/// `true`, the audio playback is killed immediately and the function
+/// returns early. This enables pause/resume functionality.
+///
+/// # Errors
+///
+/// - `repeat must be between 1 and 10`
+/// - `speed must be between 0.0 and 2.0`
+/// - `volume must be between 0.0 and 2.0`
+/// - `No audio player found. Install one of: ...`
 pub fn play_audio(
     samples: &[f32],
     sample_rate: u32,
@@ -153,9 +166,11 @@ pub fn play_audio(
     Ok(())
 }
 
-/// Wait for a child process to complete, checking a stop flag periodically.
-/// Returns `true` if the child completed normally, `false` if it was killed
-/// due to the stop flag being set.
+/// Wait for a child process to complete, checking a stop flag
+/// periodically.
+///
+/// Returns `true` if the child completed normally, `false` if it was
+/// killed due to the stop flag being set.
 fn wait_for_child(
     child: &mut Child,
     stop_flag: Option<&Arc<AtomicBool>>,

@@ -1,11 +1,18 @@
 //! TTS model configuration and loading.
+//!
+//! Piper models are ONNX files paired with a `.onnx.json` config that
+//! declares the phoneme map, inference parameters, and audio settings.
+//! This module resolves the model path and loads its config.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 use crate::error::GxxError;
 
-/// Piper model configuration loaded from .onnx.json
+/// Piper model configuration loaded from `.onnx.json`.
+///
+/// Fields marked `#[serde(default)]` are optional so older configs
+/// (e.g. Ryan) that omit them still deserialise.
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct PiperConfig {

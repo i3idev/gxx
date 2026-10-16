@@ -1,4 +1,15 @@
-//! Example commands: ex (shared by word and grammar kinds).
+//! Example commands: `ex` (shared by word and grammar kinds).
+//!
+//! Examples are bilingual sentence pairs with an English side (`en`)
+//! and a Persian side (`fa`). Language is auto-detected from Unicode
+//! script.
+//!
+//! Operations:
+//!
+//! - List: `gxx ex <word>`
+//! - Add: `gxx ex <word> ["en text"] ["fa text"]`
+//! - Edit one side: `gxx ex <word> N "text"`
+//! - Delete: `gxx ex <word> -N` (or `--delete --number N` via clap)
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -8,7 +19,18 @@ use crate::error::GxxError;
 use crate::model::lang_of;
 use crate::render::ex_lines;
 
-/// `gxx ex <name> ["text"] | N "text" | -N`
+/// `gxx ex <word> ["text"] | N "text" | -N`
+///
+/// Dispatches example management for a word or grammar/style/form
+/// entry. `kind` is `"word"`, `"grammar"`, `"style"`, or `"form"`.
+///
+/// # Errors
+///
+/// - `usage: gxx ex <name> ["text"] | N "text" | -N` — no name given
+/// - `no <kind> '<name>'. add it first: gxx <kind> add <name>` — entry not found
+/// - `no example #N (have M)` — example number out of range
+/// - `one example per command: quote each sentence` — more than two texts
+/// - `two texts in the same language; give one en and one fa` — same-language pair
 pub fn cmd_ex(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg(

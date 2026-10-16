@@ -1,30 +1,48 @@
-//! Data model: Entry/Word/Grammar structs and helpers.
+//! Data model for `gxx` entries.
 //!
-//! The JSON shape must be semantically compatible with the Python version:
-//! known fields are typed, unknown fields are preserved via `serde_json::Value`
-//! so Python-made databases round-trip through Rust and vice versa.
+//! The JSON shape must be semantically compatible with the Python
+//! version: known fields are typed, unknown fields are preserved via
+//! [`serde_json::Value`] so Python-made databases round-trip through
+//! Rust and vice versa.
+//!
+//! Each entry is one of four kinds:
+//!
+//! - `word` — vocabulary entry
+//! - `grammar` — grammar rule
+//! - `style` — style entry
+//! - `form` — form entry
+//!
+//! Common fields: `id`, `kind`, `lang`, `level`, `title`, `text`,
+//! `data`, `created_at`, `updated_at`.
 
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde_json::Value;
 use std::sync::Mutex;
 
-/// Global quiet state for load command.
+/// Global quiet state for the `load` command.
+///
+/// Set by [`set_quiet`] when `gxx load` suppresses informational
+/// output. Read by command handlers via `STATE.lock().unwrap().quiet`.
 pub static STATE: Lazy<Mutex<State>> = Lazy::new(|| Mutex::new(State { quiet: false }));
 
+/// Process-wide state shared across command handlers.
 pub struct State {
+    /// Whether non-error output should be suppressed.
     pub quiet: bool,
 }
 
+/// Set the global quiet state.
 pub fn set_quiet(q: bool) {
     STATE.lock().unwrap().quiet = q;
 }
 
-/// Persian normalisation applied only to search keys / the `text` column.
+/// Persian normalisation applied only to search keys / the `text`
+/// column.
 ///
-/// Arabic ي -> ی, ك -> ک, and ZWNJ (U+200C) is removed so that lookups that
-/// differ only by these characters still match.  Display text is never
-/// changed.
+/// Arabic `ي` → `ی`, `ك` → `ک`, and ZWNJ (U+200C) is removed so that
+/// lookups that differ only by these characters still match. Display
+/// text is never changed.
 pub fn normalise(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -38,7 +56,11 @@ pub fn normalise(s: &str) -> String {
     out
 }
 
-/// Persian if any char is in U+0600..U+06FF, else English.
+/// Detect the primary language of a string.
+///
+/// Returns `"fa"` if any character is in the U+0600..U+06FF Arabic
+/// block, otherwise `"en"`. Used to auto-direct translations and
+/// example language detection.
 pub fn lang_of(text: &str) -> &'static str {
     if text.chars().any(|c| ('\u{0600}'..='\u{06FF}').contains(&c)) {
         "fa"
@@ -187,12 +209,17 @@ pub fn new_grammar(_kind: &str, name: &str) -> Value {
     })
 }
 
-/// Entry ID: "<kind>:<key_of(name)>"
+/// Build an entry ID from a kind and name.
+///
+/// Format: `<kind>:<key_of(name)>`. IDs must NOT be normalised so
+/// Python-made databases stay byte-compatible.
 pub fn entry_id(kind: &str, name: &str) -> String {
     format!("{}:{}", kind, key_of(name))
 }
 
-/// Ensure senses array exists and return mutable reference.
+/// Ensure the `senses` array exists and return a mutable reference.
+///
+/// Senses are numbered definitions with optional notes and examples.
 pub fn senses_mut(rec: &mut Value) -> &mut Vec<Value> {
     if rec.get("senses").is_none() {
         rec["senses"] = Value::Array(vec![]);
@@ -200,7 +227,8 @@ pub fn senses_mut(rec: &mut Value) -> &mut Vec<Value> {
     rec["senses"].as_array_mut().unwrap()
 }
 
-/// Ensure collocations array exists and return mutable reference.
+/// Ensure the `collocations` array exists and return a mutable
+/// reference. Collocations are plain strings (common word pairings).
 pub fn collocations_mut(rec: &mut Value) -> &mut Vec<Value> {
     if rec.get("collocations").is_none() {
         rec["collocations"] = Value::Array(vec![]);
@@ -208,7 +236,9 @@ pub fn collocations_mut(rec: &mut Value) -> &mut Vec<Value> {
     rec["collocations"].as_array_mut().unwrap()
 }
 
-/// Ensure family array exists and return mutable reference.
+/// Ensure the `family` array exists and return a mutable reference.
+///
+/// Family members are objects with optional `word` and `pos` fields.
 pub fn family_mut(rec: &mut Value) -> &mut Vec<Value> {
     if rec.get("family").is_none() {
         rec["family"] = Value::Array(vec![]);

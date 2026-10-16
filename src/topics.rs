@@ -1,8 +1,22 @@
 //! Topic-based help for the CLI.
+//!
+//! `gxx topics` prints extended help on specific topics that go beyond
+//! the built-in CLI usage summary. Topics are defined as string
+//! constants in this module and printed by [`print_topic`].
+//!
+//! Available topics:
+//!
+//! - `tts` — TTS overview: commands, synthesis options
+//! - `models` — Voices, model layout, MODEL_CARD presets
+//! - `language` — Language detection, `--auto`, error handling
+//! - `bookmarks` — `read --save-progress` / `--resume` / `--clear-progress`
+//! - `examples` — End-to-end walkthroughs
 
 use crate::error::GxxError;
 
-/// List all available topics.
+/// List of available help topics.
+///
+/// Each entry is `(name, short description)`.
 pub const TOPICS: &[(&str, &str)] = &[
     ("tts", "TTS overview: commands, synthesis options"),
     ("models", "Voices, model layout, MODEL_CARD presets"),
@@ -14,7 +28,7 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("examples", "End-to-end walkthroughs"),
 ];
 
-/// Print the list of topics.
+/// Print the list of available topics.
 pub fn list_topics() {
     use crate::style;
     println!("{}", style::header("gxx topics — extended help"));
@@ -31,7 +45,11 @@ pub fn list_topics() {
     println!("Run `{}` for details.", style::key("gxx topics <TOPIC>"));
 }
 
-/// Print a specific topic, or list all if name is None.
+/// Print a specific topic, or list all if name is `None`.
+///
+/// # Errors
+///
+/// Returns an error for unknown topic names.
 pub fn print_topic(name: Option<&str>) -> Result<(), GxxError> {
     let Some(name) = name else {
         list_topics();
@@ -91,6 +109,10 @@ PLAYBACK VS SYNTHESIS
   For a slower, more natural read, try:
     --length-scale 1.15 --sentence-split
 
+DETAILED GUIDE
+  docs/tts.md — full TTS and reading reference
+  docs/models.md — model discovery, selection, MODEL_CARD
+
 See also:
   gxx topics models
   gxx topics language
@@ -142,6 +164,10 @@ COMMANDS
   gxx model info <id>      # detailed info
 
   gxx paragraph --list-voices    # table with MODEL_CARD defaults
+
+DETAILED GUIDE
+  docs/models.md — model discovery, selection, MODEL_CARD, errors
+  docs/tts.md    — TTS commands and synthesis options
 "#;
 
 const LANGUAGE: &str = r#"gxx TTS — Language handling
@@ -177,6 +203,10 @@ MIXED TEXT IN NON-AUTO MODE
   Mixed text is spoken with the active voice. eSpeak language tags
   like (en) and (fa) are stripped automatically before Piper sees
   the IPA.
+
+DETAILED GUIDE
+  docs/tts.md — full TTS and language handling reference
+  docs/models.md — model discovery and selection
 "#;
 
 const BOOKMARKS: &str = r#"gxx read — Bookmarks and resume
@@ -211,6 +241,9 @@ INTERRUPT
 COMBINING WITH OTHER FLAGS
   $ gxx read book.txt --auto --save-progress
   $ gxx read book.txt --auto --resume --sentence-split
+
+DETAILED GUIDE
+  docs/tts.md — full reading and progress reference
 "#;
 
 const EXAMPLES: &str = r#"gxx topics — End-to-end walkthroughs
@@ -248,4 +281,8 @@ FINE-TUNING
   gxx paragraph --length-scale 1.2 --noise-scale 0.9 "test"
   gxx paragraph --noise-w 1.2 "test"
   gxx paragraph --sentence-split --sentence-pause-ms 300 "One. Two."
+
+DETAILED GUIDE
+  docs/tutorials.md — complete end-to-end workflows
+  docs/command-reference.md — full command and option index
 "#;

@@ -1,4 +1,9 @@
-//! Grammar/Style/Form commands: add, list, del, err, field setters, show.
+//! Grammar / style / form commands: `add`, `list`, `del`, `err`, field
+//! setters, `show`.
+//!
+//! `gram`, `style`, and `form` share the same command structure and
+//! differ only in the entry `kind` stored in the database. Each entry
+//! has: title, rule, desc, cat, level, notes, examples, errors.
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -18,7 +23,15 @@ const GRAM_FIELDS: &[(&str, &str)] = &[
     ("note", "notes"),
 ];
 
-/// `gxx gram|style|form add <name> [--cat c] [--lvl l] [--rule r] [--desc d]`
+/// `gxx gram|style|form add <name> [--cat C] [--lvl L] [--rule R] [--desc D]`
+///
+/// Create or update a grammar/style/form entry. If the entry exists,
+/// it is updated; otherwise created. Empty option values remove the
+/// field.
+///
+/// # Errors
+///
+/// - `usage: gxx <kind> add <name> [--cat c] [--lvl l] [--rule r] [--desc d]` — no name
 pub fn cmd_gadd(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     let (pos, opts) = parse_flags(
         args,
@@ -66,6 +79,13 @@ pub fn cmd_gadd(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
 }
 
 /// `gxx gram|style|form list [prefix]`
+///
+/// List entries ordered by title. If `prefix` is given, only entries
+/// whose key matches or starts with `prefix.` are shown.
+///
+/// # Errors
+///
+/// - `unknown list option: <flag>` — unrecognized flag
 pub fn cmd_glist(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     let prefix = if args.is_empty() {
         String::new()
@@ -90,6 +110,13 @@ pub fn cmd_glist(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gx
 }
 
 /// `gxx gram|style|form del <name>`
+///
+/// Delete a grammar/style/form entry. Verifies the entry exists first.
+///
+/// # Errors
+///
+/// - `usage: gxx del <name>` — no name
+/// - `no <kind> '<name>'. add it first: gxx <kind> add <name>` — entry not found
 pub fn cmd_gdel(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx del <name>"));
@@ -105,7 +132,21 @@ pub fn cmd_gdel(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
     Ok(())
 }
 
-/// `gxx gram|style|form err <name> ["text"] [-N]`
+/// `gxx gram|style|form err <name> ["text"] | -N`
+///
+/// Manage error examples (common learner mistakes) on a grammar entry.
+///
+/// - List: `gxx gram|style|form err <name>`
+/// - Add: `gxx gram|style|form err <name> "text"`
+/// - Delete: `gxx gram|style|form err <name> -N`
+///
+/// Errors are single-text items (no bilingual pairing). Deletion uses
+/// `-N`.
+///
+/// # Errors
+///
+/// - `usage: gxx <kind> err <name> ["text"] [-N]` — no name
+/// - `no error #N (have M)` — error number out of range
 pub fn cmd_gerr(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg(format!(
@@ -166,6 +207,15 @@ pub fn cmd_gerr(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
 }
 
 /// `gxx gram|style|form rule|desc|cat|lvl|note <name> [value]`
+///
+/// Get or set a single field on a grammar/style/form entry. Without
+/// `value`, prints the current value (or `-` if unset). With `value`,
+/// sets it.
+///
+/// # Errors
+///
+/// - `usage: gxx <field> <name> [value]` — no name
+/// - `no <kind> '<name>'. add it first: gxx <kind> add <name>` — entry not found
 pub fn cmd_gset(
     con: &Connection,
     kind: &str,
@@ -211,6 +261,14 @@ pub fn cmd_gset(
 }
 
 /// `gxx gram|style|form show <name> [sections...]`
+///
+/// Display a grammar/style/form entry. Optional section filters:
+/// `rule`, `desc`, `ex`, `err`, `note`.
+///
+/// # Errors
+///
+/// - `usage: gxx <kind> show <name>` — no name
+/// - `no <kind> '<name>'. add it first: gxx <kind> add <name>` — entry not found
 pub fn cmd_gshow(con: &Connection, kind: &str, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg(format!(
@@ -225,7 +283,16 @@ pub fn cmd_gshow(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gx
     Ok(())
 }
 
-/// Main entry point for gram/style/form group commands
+/// Main entry point for `gram` / `style` / `form` group commands.
+///
+/// `grp` is `"gram"`, `"style"`, or `"form"`. Translates the first
+/// argument into the subcommand name and dispatches to the
+/// appropriate handler.
+///
+/// # Errors
+///
+/// - `usage: gxx <grp> add|list|del|ex|err|rule|desc|cat|lvl|note|show ...` — no subcommand
+/// - `unknown: gxx <grp> <sub>` — invalid subcommand
 pub fn cmd_group(con: &Connection, grp: &str, args: &[String]) -> Result<(), GxxError> {
     let kind = match grp {
         "gram" => "grammar",

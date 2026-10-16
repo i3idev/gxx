@@ -133,6 +133,33 @@
 //! exist); run `gxx init` first. Even `gxx db new` needs the data
 //! directory created by `gxx init`.
 //!
+//! ### Local and global databases
+//!
+//! A database is always stored relative to the selected data directory.
+//!
+//! - Global database: use no `--vault` and no `GXX_VAULT`. The data
+//!   directory is `GXX_HOME` if set, otherwise `~/.gxx`. Global
+//!   databases are available across projects.
+//! - Local (project) database: select it explicitly with `--vault PATH`
+//!   or `GXX_VAULT`. Data is stored under `<PATH>/.gxx/`. There is no
+//!   implicit use of the current working directory; running `gxx` from
+//!   another directory does not select a project database unless you
+//!   also select that vault.
+//! - Active-database metadata is separate per data directory: each
+//!   global or local `.gxx/config` stores only the active name for
+//!   that scope. Local and global databases may share a name; their
+//!   paths differ and operations are scoped to the selected data
+//!   directory.
+//! - Path precedence: `--vault` / `-v` > `GXX_VAULT` > `GXX_HOME` >
+//!   `~/.gxx`.
+//! - If the selected data directory has not been initialized, commands
+//!   report `not initialised. run: gxx init` instead of falling back to
+//!   another location.
+//! - Deletion affects only the selected data directory. Deleting `foo`
+//!   in a vault never deletes `foo` from global storage (or another
+//!   vault), and changing the active scope does not change which file
+//!   a previously selected name referred to in another scope.
+//!
 //! ## Database management
 //!
 //! Manage the SQLite database files themselves. Database commands

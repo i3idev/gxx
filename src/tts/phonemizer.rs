@@ -1,4 +1,8 @@
 //! eSpeak phonemization for Piper TTS.
+//!
+//! Converts text to IPA using eSpeak NG, then maps IPA symbols to
+//! Piper phoneme IDs. Also handles language detection, sentence
+//! splitting, and vowel stretching.
 
 use espeak_ng::{install_bundled_data, EspeakNg};
 use std::path::PathBuf;
@@ -10,6 +14,9 @@ use crate::tts::model::PiperConfig;
 static ESPEAK: OnceLock<Result<Mutex<EspeakNg>, GxxError>> = OnceLock::new();
 
 /// Get the bundled data directory, installing if necessary.
+///
+/// eSpeak NG data is installed to `<XDG data dir>/gxx/espeak-ng-data`
+/// on first use.
 fn get_data_dir() -> Result<PathBuf, GxxError> {
     let data_dir = dirs::data_local_dir()
         .ok_or_else(|| GxxError::msg("Could not determine local data directory"))?
@@ -31,6 +38,7 @@ fn get_data_dir() -> Result<PathBuf, GxxError> {
 }
 
 /// Initialize eSpeak NG for the given voice.
+///
 /// Returns an error if eSpeak is not available.
 fn init_espeak(voice: &str) -> Result<MutexGuard<'static, EspeakNg>, GxxError> {
     let result = ESPEAK.get_or_init(|| {
@@ -50,8 +58,11 @@ fn init_espeak(voice: &str) -> Result<MutexGuard<'static, EspeakNg>, GxxError> {
     Ok(espeak)
 }
 
-/// Split IPA phonemes into individual symbols that exist in the phoneme_id_map.
+/// Split IPA phonemes into individual symbols that exist in the
+/// `phoneme_id_map`.
+///
 /// Uses longest-match algorithm to handle multi-character IPA symbols.
+/// Piper has an explicit space token; word boundaries are preserved.
 fn split_ipa_to_symbols(
     ipa: &str,
     phoneme_id_map: &std::collections::HashMap<String, Vec<u32>>,
@@ -104,13 +115,15 @@ fn split_ipa_to_symbols(
     Ok(symbols)
 }
 
-/// Phonemize text using eSpeak NG.
-/// Returns a vector of phoneme IDs matching the Piper model's phoneme_id_map.
-///
 /// Convert manually supplied IPA directly into Piper phoneme IDs.
 ///
-/// Unlike `phonemize()`, this does NOT call eSpeak.
-/// The caller controls the exact IPA sequence.
+/// Unlike [`phonemize`], this does NOT call eSpeak. The caller
+/// controls the exact IPA sequence.
+///
+/// # Errors
+///
+/// Returns an error if the IPA is empty or contains a symbol not in
+/// the model's `phoneme_id_map`.
 pub fn phonemize_manual(
     ipa: &str,
     phoneme_id_map: &std::collections::HashMap<String, Vec<u32>>,
@@ -151,7 +164,11 @@ pub fn phonemize_manual(
 /// Split IPA using longest-match-first.
 ///
 /// This is important for multi-character IPA symbols such as:
-/// dʒ, tʃ, aɪ, eɪ, oʊ, etc.
+/// `dʒ`, `tʃ`, `aɪ`, `eɪ`, `oʊ`, etc.
+///
+/// Piper Ryan does not expose `dʒ`/`tʃ` as single phoneme-map keys,
+/// so they are expanded to component symbols (`dʒ` → `d` + `ʒ`,
+/// `tʃ` → `t` + `ʃ`).
 fn split_ipa_symbols(ipa: &str) -> Vec<String> {
     // Piper Ryan does not expose dʒ/tʃ as single phoneme-map keys.
     // Expand them to the component symbols:
@@ -222,8 +239,16 @@ fn split_ipa_symbols(ipa: &str) -> Vec<String> {
     out
 }
 
-/// Detect the primary language of the text using Unicode ranges.
-/// Returns "fa", "en", "mixed", or "unknown".
+/// Detect the primary language of text using Unicode ranges.
+///
+/// Returns `"fa"`, `"en"`, `"mixed"`, or `"unknown"`.
+///
+/// - `"fa"` — any character in the U+0600..U+06FF Arabic block
+///   (Persian-specific extensions U+FB50..U+FDFF and U+FE70..U+FEFF
+///   also count)
+/// - `"en"` — any ASCII alphabetic character
+/// - `"mixed"` — both Persian and Latin present
+/// - `"unknown"` — neither present
 pub fn detect_language(text: &str) -> &'static str {
     let has_persian = text.chars().any(|c| {
         c.is_alphabetic()
@@ -244,7 +269,10 @@ pub fn detect_language(text: &str) -> &'static str {
     }
 }
 
-/// Remove eSpeak language-switch tags like `(en)` and `(fa)` from IPA output.
+/// Remove eSpeak language-switch tags like `(en)` and `(fa)` from IPA
+/// output.
+///
+/// Handles nested tags; unbalanced tags are left as-is.
 fn strip_language_tags(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut depth = 0usize;
@@ -259,6 +287,21 @@ fn strip_language_tags(s: &str) -> String {
     out
 }
 
+/// Phonemize text using eSpeak NG.
+///
+/// Returns a vector of phoneme IDs matching the Piper model's
+/// `phoneme_id_map`.
+///
+/// The text's detected language is checked against the voice's
+/// language. If they don't match (and the text is not mixed or
+/// unknown), an error is returned suggesting `--phonemes` or
+/// `gxx model use <id>`.
+///
+/// # Errors
+///
+/// - `text language '<lang>' does not match active voice '<voice>'`
+/// - `Phonemization failed: <e>` — eSpeak error
+/// - `Phoneme '<symbol>' is missing from phoneme_id_map`
 pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u32>, GxxError> {
     // Reject text whose language doesn't match the voice's language.
     let text_lang = detect_language(text);
@@ -335,6 +378,10 @@ pub fn phonemize(text: &str, voice: &str, config: &PiperConfig) -> Result<Vec<u3
 
     Ok(ids)
 }
+/// Convert phoneme strings to Piper phoneme IDs.
+///
+/// Unknown phonemes are skipped with a warning and replaced by the
+/// space token (if present in the map).
 #[allow(dead_code)]
 pub fn phonemes_to_ids(
     phonemes: &[String],
@@ -433,9 +480,11 @@ mod tests {
 
 /// Split text into contiguous language segments.
 ///
-/// Each segment is `(text_slice, lang)` where `lang` is `"fa"`, `"en"`, or
-/// `"neutral"` for runs with no alphabetic characters. Neutral runs are
-/// merged into the previous segment when possible.
+/// Each segment is `(text_slice, lang)` where `lang` is `"fa"`,
+/// `"en"`, `"neutral"`, or `"other"`. Neutral runs (no alphabetic
+/// characters) are merged into the previous segment when possible.
+/// Other-script runs (Cyrillic, CJK, etc.) get their own segment tag
+/// so `--auto` can skip them independently.
 ///
 /// Returns an empty vector for empty input.
 pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
@@ -486,10 +535,11 @@ pub fn segment_by_language(text: &str) -> Vec<(String, &'static str)> {
     segments
 }
 
-/// Split text into sentences on `.!?` (ASCII and fullwidth) and Persian `؟`.
+/// Split text into sentences on `.!?` (ASCII and fullwidth) and
+/// Persian `؟`.
 ///
-/// Consecutive terminators (e.g. `...`) are kept together. Whitespace-only
-/// or punctuation-only runs are discarded.
+/// Consecutive terminators (e.g. `...`) are kept together.
+/// Whitespace-only or punctuation-only runs are discarded.
 pub fn split_sentences(text: &str) -> Vec<String> {
     fn is_terminator(c: char) -> bool {
         matches!(
@@ -525,8 +575,9 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 }
 
 /// Add `extra` more `ː` marks after each existing `ː` in the IPA.
+///
 /// Long vowels (`ɑː`, `iː`, `uː`, ...) become longer without touching
-/// short vowels.
+/// short vowels. `extra=0` is a no-op.
 pub fn stretch_long_vowels(ipa: &str, extra: u32) -> String {
     if extra == 0 {
         return ipa.to_string();

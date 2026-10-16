@@ -1,4 +1,17 @@
-//! SQLite access: open, schema, load/save entry, search.
+//! SQLite storage layer for `gxx`.
+//!
+//! This module owns all filesystem and database access:
+//!
+//! - Vault / home directory resolution ([`home_dir`], [`set_vault`],
+//!   [`GXX_VAULT`])
+//! - Database file paths ([`db_dir`], [`db_path`], [`db_names`])
+//! - Active database tracking ([`active_name`], [`connect`])
+//! - Record loading / saving ([`load_rec`], [`load_rec_fallback`],
+//!   [`save_rec`])
+//! - Full-text search ([`search`], [`search_records`])
+//!
+//! Data directory precedence: `--vault` / `-v` (CLI) >
+//! `GXX_VAULT` (env) > `GXX_HOME` (env) > `~/.gxx`.
 
 use once_cell::sync::Lazy;
 use rusqlite::Connection;
@@ -9,8 +22,17 @@ use std::sync::Mutex;
 use crate::error::GxxError;
 use crate::model::{entry_id, key_of, lang_of, normalise, now, searchable, title_of};
 
+/// Process-wide vault override.
+///
+/// Set by [`set_vault`] when `--vault` / `-v` is passed on the command
+/// line. Takes precedence over `GXX_VAULT` only when the CLI flag is
+/// explicitly provided.
 static VAULT: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
+/// Set the vault path from the command line.
+///
+/// The path is canonicalized when possible; relative paths resolve
+/// against the current working directory at the time of the call.
 pub fn set_vault(vault: Option<&str>) {
     let mut v = VAULT.lock().unwrap();
     *v = vault.map(|x| {
@@ -20,19 +42,32 @@ pub fn set_vault(vault: Option<&str>) {
     });
 }
 
+/// Resolve the active vault directory, if any.
+///
+/// Explicit CLI selection ([`set_vault`]) takes precedence over
+/// `GXX_VAULT`. Returns `None` when no vault is configured.
 fn vault_dir() -> Option<PathBuf> {
-    // Check environment variable first
+    // Explicit CLI selection always wins over the environment, even if a
+    // stale GXX_VAULT is present in the process/shell environment.
+    let cli = VAULT.lock().unwrap().clone();
+    if cli.is_some() {
+        return cli;
+    }
+
     if let Ok(v) = std::env::var("GXX_VAULT") {
         if !v.is_empty() {
             return Some(PathBuf::from(v));
         }
     }
-    // Check thread-local/global override
-    let v = VAULT.lock().unwrap();
-    v.clone()
+
+    None
 }
 
-/// Schema SQL for the entries table.
+/// Schema SQL for the `entries` table.
+///
+/// Each row stores a JSON-serialised entry with indexed columns for
+/// fast lookup. The `text` column is a normalised searchable form
+/// computed from the JSON at write time.
 pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS entries (
   id         TEXT PRIMARY KEY,
@@ -48,10 +83,15 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE INDEX IF NOT EXISTS idx_kind_lang ON entries(kind, lang);
 ";
 
-/// Database name regex: letters, digits, - and _ only.
+/// Database name regex: letters, digits, `-` and `_` only.
 pub const DB_NAME_RE: &str = r"^[\w-]+$";
 
-/// Home directory: GXX_HOME env or ~/.gxx or vault/.gxx
+/// Resolve the gxx home directory.
+///
+/// Precedence: vault (if set via `--vault` / `GXX_VAULT`) >
+/// `GXX_HOME` (env) > `~/.gxx`.
+///
+/// When a vault is active, returns `<vault>/.gxx`.
 pub fn home_dir() -> PathBuf {
     // If vault is specified (via --vault or GXX_VAULT), use vault/.gxx
     if let Some(mut v) = vault_dir() {
@@ -67,20 +107,31 @@ pub fn home_dir() -> PathBuf {
         })
 }
 
-/// DB directory: ~/.gxx/db
+/// Directory containing database files: `<home>/db`.
 pub fn db_dir() -> PathBuf {
     let mut p = home_dir();
     p.push("db");
     p
 }
 
-/// Config file: ~/.gxx/config (stores active db name)
+/// Path to the config file: `<home>/config`.
+///
+/// Stores the active database name (or is empty when none is set).
 pub fn config_path() -> PathBuf {
     let mut p = home_dir();
     p.push("config");
     p
 }
 
+/// Resolve the active database name.
+///
+/// If `override_name` is `Some`, returns it directly. Otherwise reads
+/// the name from `config`. Returns an error if no config exists or the
+/// config is empty.
+///
+/// # Errors
+///
+/// - `no active db. run: gxx init, then: gxx db new <name>` — no config or empty config
 pub fn active_name(override_name: Option<&str>) -> Result<String, GxxError> {
     if let Some(name) = override_name {
         return Ok(name.to_string());
@@ -101,6 +152,15 @@ pub fn active_name(override_name: Option<&str>) -> Result<String, GxxError> {
     }
 }
 
+/// Open a connection to the active (or overridden) database.
+///
+/// Resolves the database name via [`active_name`], opens the SQLite
+/// file at `<db-dir>/<name>.db`, and applies the schema.
+///
+/// # Errors
+///
+/// - `no active db. run: gxx init, then: gxx db new <name>` — no active db
+/// - `no database '<name>'. see: gxx db list` — database file does not exist
 pub fn connect(override_name: Option<&str>) -> Result<Connection, GxxError> {
     let name = active_name(override_name)?;
     let path = db_dir().join(format!("{}.db", name));
@@ -115,6 +175,10 @@ pub fn connect(override_name: Option<&str>) -> Result<Connection, GxxError> {
     Ok(con)
 }
 
+/// List all database names in the current data directory.
+///
+/// Sorted alphabetically. Returns an empty vector when the directory
+/// does not exist or contains no `.db` files.
 pub fn db_names() -> Result<Vec<String>, GxxError> {
     let mut names = Vec::new();
     if let Ok(entries) = std::fs::read_dir(db_dir()) {
@@ -131,13 +195,15 @@ pub fn db_names() -> Result<Vec<String>, GxxError> {
     Ok(names)
 }
 
-/// Open (or create) a database by name, return its path.
+/// Path to a database file by name: `<db-dir>/<name>.db`.
 pub fn db_path(name: &str) -> PathBuf {
     db_dir().join(format!("{}.db", name))
 }
 
-/// Load a record by exact DB id (kind:key_of(name)).
-/// Returns the JSON data as serde_json::Value.
+/// Load a record by exact DB id (`kind:key_of(name)`).
+///
+/// Returns `Ok(None)` when no matching row exists. The returned
+/// [`Value`] is the parsed JSON `data` column.
 pub fn load_rec(con: &Connection, kind: &str, name: &str) -> Result<Option<Value>, GxxError> {
     let id = entry_id(kind, name);
     let mut stmt = con.prepare("SELECT data FROM entries WHERE id = ?1")?;
@@ -151,9 +217,15 @@ pub fn load_rec(con: &Connection, kind: &str, name: &str) -> Result<Option<Value
 }
 
 /// Load a record with normalised-key fallback.
-/// If exact-id lookup fails, scan all rows of that kind and match
-/// normalised(key_of(title)) against normalised(key_of(name)).
-/// This handles Persian/Arabic letter variants and ZWNJ.
+///
+/// If exact-id lookup fails, scans all rows of the given kind and
+/// matches `normalise(key_of(title))` against `normalise(key_of(name))`.
+/// This handles Persian/Arabic letter variants and ZWNJ so lookups
+/// that differ only by these characters still match.
+///
+/// # Errors
+///
+/// - `no <kind> '<name>'. add it first: gxx <kind> add <name>` — no match
 pub fn load_rec_fallback(con: &Connection, kind: &str, name: &str) -> Result<Value, GxxError> {
     if let Some(rec) = load_rec(con, kind, name)? {
         return Ok(rec);
@@ -183,8 +255,12 @@ fn label(kind: &str) -> &str {
     crate::model::label(kind)
 }
 
-/// Save a record (upsert). `rec` is a JSON Value (the Python dict).
-/// The text column is normalised; display text is never changed.
+/// Save a record (upsert).
+///
+/// Sets `updated_at` to now, assigns `created_at` if absent, and
+/// inserts or updates the row by id. The `text` column is recomputed
+/// from the JSON via [`crate::model::searchable`] so old rows written
+/// by Python without normalisation still match.
 pub fn save_rec(con: &Connection, kind: &str, rec: &mut Value) -> Result<(), GxxError> {
     let n = now();
     rec["updated_at"] = Value::String(n.clone());

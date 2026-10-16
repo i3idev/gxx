@@ -1,13 +1,15 @@
 //! Piper TTS inference backed by ONNX Runtime.
 //!
 //! The ONNX Runtime binaries are provided through `ort`'s
-//! `download-binaries` feature, with dynamic loading disabled. The runtime
-//! API is resolved through the linked `OrtGetApiBase` symbol, so inference
-//! should not require an external `libonnxruntime.so` at runtime.
+//! `download-binaries` feature, with dynamic loading disabled. The
+//! runtime API is resolved through the linked `OrtGetApiBase` symbol,
+//! so inference should not require an external `libonnxruntime.so` at
+//! runtime.
 //!
-//! A single session is shared across synthesis requests. Access is serialized
-//! through a mutex because a session is mutable during inference and must not
-//! be accessed concurrently without synchronization.
+//! A single session is shared across synthesis requests. Access is
+//! serialized through a mutex because a session is mutable during
+//! inference and must not be accessed concurrently without
+//! synchronization.
 
 use once_cell::sync::OnceCell;
 use ort::session::Session;
@@ -23,18 +25,15 @@ type CachedSession = (PathBuf, Arc<Mutex<Session>>);
 
 /// Process-wide ONNX session shared by all synthesis requests.
 ///
-/// `OnceCell` ensures that the session is initialized lazily and retained
-/// for subsequent calls. `Arc` allows callers to share ownership, while
-/// `Mutex` serializes access to the mutable session.
+/// `OnceCell` ensures that the session is initialized lazily and
+/// retained for subsequent calls. `Arc` allows callers to share
+/// ownership, while `Mutex` serializes access to the mutable session.
 static PIPER_SESSION: OnceCell<Mutex<Option<CachedSession>>> = OnceCell::new();
 
 /// Register the ONNX Runtime environment configuration.
 ///
-/// This function is called before session creation to establish the runtime
-/// environment under the application-specific name `gxx-tts`.
-///
-/// Runtime initialization failures should be reported through `GxxError`
-/// rather than handled with a panic.
+/// Called before session creation to establish the runtime environment
+/// under the application-specific name `gxx-tts`.
 ///
 /// # Errors
 ///
@@ -46,9 +45,10 @@ fn init_ort_environment() -> Result<(), GxxError> {
 
 /// Lazily initialize and retrieve the shared Piper inference session.
 ///
-/// The model path is resolved by the model subsystem, keeping filesystem
-/// and model-location policy outside the inference implementation. The
-/// session is created only when the first synthesis request is processed.
+/// The model path is resolved by the model subsystem, keeping
+/// filesystem and model-location policy outside the inference
+/// implementation. The session is created only when the first
+/// synthesis request is processed.
 ///
 /// # Errors
 ///
@@ -88,14 +88,15 @@ fn init_ort_session(config_onnx_path: Option<&Path>) -> Result<Arc<Mutex<Session
 
 /// Convert text into speech using the configured Piper ONNX model.
 ///
-/// Text is first converted into phoneme IDs by the phonemizer, then passed
-/// to the inference pipeline. The returned samples are expected to represent
-/// mono audio at the sample rate specified by `config.audio.sample_rate`.
+/// Text is first converted into phoneme IDs by the phonemizer, then
+/// passed to the inference pipeline. The returned samples represent
+/// mono audio at the sample rate specified by
+/// `config.audio.sample_rate`.
 ///
 /// # Errors
 ///
-/// Returns an error if phonemization, tensor construction, ONNX inference,
-/// or output extraction fails.
+/// Returns an error if phonemization, tensor construction, ONNX
+/// inference, or output extraction fails.
 pub fn synthesize(text: &str, config: &PiperConfig) -> Result<Vec<f32>, GxxError> {
     let phoneme_ids = phonemize(text, &config.espeak.voice, config)?;
     synthesize_ids(&phoneme_ids, config)
@@ -106,13 +107,13 @@ pub fn synthesize(text: &str, config: &PiperConfig) -> Result<Vec<f32>, GxxError
 /// This entry point bypasses eSpeak and maps the supplied phonetic
 /// representation directly to Piper's model-specific phoneme IDs.
 ///
-/// The IPA input must be compatible with the phoneme mapping configured
-/// for the selected model.
+/// The IPA input must be compatible with the phoneme mapping
+/// configured for the selected model.
 ///
 /// # Errors
 ///
-/// Returns an error if IPA conversion, tensor construction, ONNX inference,
-/// or output extraction fails.
+/// Returns an error if IPA conversion, tensor construction, ONNX
+/// inference, or output extraction fails.
 pub fn synthesize_manual(ipa: &str, config: &PiperConfig) -> Result<Vec<f32>, GxxError> {
     eprintln!("TTS: manual IPA = {:?}", ipa);
 

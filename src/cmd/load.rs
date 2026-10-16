@@ -1,4 +1,10 @@
-//! Load command: run a file of commands.
+//! Load command: run a batch of commands from a `.gxx` file.
+//!
+//! Each non-empty, non-comment line is parsed with `shlex` and executed
+//! via [`crate::run::run_internal`]. The leading `gxx` token is
+//! optional. `load` inside a file is forbidden. Errors on a line are
+//! reported but do not stop the batch. Output is suppressed while the
+//! file is processed; a summary is printed at the end.
 
 use shlex::split;
 use std::path::Path;
@@ -8,6 +14,16 @@ use crate::model::{set_quiet, STATE};
 use crate::run::run_internal;
 
 /// `gxx load <file.gxx>`
+///
+/// Execute commands from a text file. One command per line; `#`
+/// starts a comment. Empty lines are skipped.
+///
+/// # Errors
+///
+/// - `usage: gxx load <file.gxx>` — no file
+/// - `no such file: <path>` — file does not exist
+/// - `line N: parse error` — shlex parse failure
+/// - `line N: load inside a file is not allowed` — nested load
 pub fn cmd_load(args: &[String], db_override: Option<&str>) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx load <file.gxx>"));

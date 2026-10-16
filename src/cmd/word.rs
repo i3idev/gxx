@@ -1,4 +1,9 @@
-//! Word commands: add, show, find, list, del, pos, lvl, pron, def, note, say.
+//! Word commands: `add`, `show`, `find`, `list`, `del`, `pos`, `lvl`,
+//! `pron`, `def`, `note`, `say`, `ex`, `sense`, `coll`, `family`.
+//!
+//! A word entry stores: word/title, translations, part of speech,
+//! proficiency level, pronunciation, definition, notes, examples,
+//! synonyms, antonyms, senses, collocations, and word-family members.
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -13,7 +18,15 @@ use crate::model::{
 use crate::render::{render_entry, render_word_list};
 use crate::tts::{say_manual_with_active_model, say_with_active_model, PlaybackOptions};
 
-/// `gxx add <word> [translations...] [-p pos] [-l level]`
+/// `gxx add <word> [translations...] [-p POS] [-l LEVEL]`
+///
+/// Add a new word entry, or update an existing one. Translations are
+/// auto-directed to the opposite language of the word's detected
+/// script. Duplicates are skipped.
+///
+/// # Errors
+///
+/// - `usage: gxx add <word> [translations...] [-p pos] [-l level]` — no word
 pub fn cmd_add(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     let (pos, opts) = parse_flags(
         args,
@@ -66,7 +79,16 @@ pub fn cmd_add(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx show <word> [tr|syn|ant|ex]`
+/// `gxx show <word> [sections...]`
+///
+/// Display an entry's content. Searches all four kinds (word, grammar,
+/// style, form). Optional section filters: `tr`, `syn`, `ant`, `ex`,
+/// `sense`, `coll`, `family`, `note`.
+///
+/// # Errors
+///
+/// - `usage: gxx show <word> [tr|syn|ant|ex]` — no word
+/// - `not found: <word>  (try: gxx find <word>)` — no matching entry
 pub fn cmd_show(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx show <word> [tr|syn|ant|ex]"));
@@ -90,7 +112,16 @@ pub fn cmd_show(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx find <text> [--all]`
+/// `gxx find <query> [--all]`
+///
+/// Search entries by title or content. Case-insensitive substring
+/// match on normalised text. `*` glob wildcards supported. Results
+/// sorted: exact matches first, then by title. `--all` searches all
+/// databases.
+///
+/// # Errors
+///
+/// - `usage: gxx find <text> [--all]` — no query
 pub fn cmd_find(
     con: &Connection,
     args: &[String],
@@ -130,7 +161,14 @@ pub fn cmd_find(
     Ok(())
 }
 
-/// `gxx list [--pos x] [--lvl x] [--lang en|fa]`
+/// `gxx list [--pos POS] [--lvl LEVEL] [--lang LANG]`
+///
+/// List word entries with optional filters: part of speech, proficiency
+/// level, or language (`en`/`fa`).
+///
+/// # Errors
+///
+/// - `unknown list option: <flag>` — unrecognized flag
 pub fn cmd_list(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     let (_, opts) = parse_flags(
         args,
@@ -175,7 +213,16 @@ pub fn cmd_list(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx del <word>`
+/// `gxx del <word> [--yes]`
+///
+/// Delete a word entry. Without `--yes`, prompts interactively to type
+/// the word for confirmation.
+///
+/// # Errors
+///
+/// - `usage: gxx del <name>` — no word
+/// - `no word '<name>'. add it first: gxx add <name>` — entry not found
+/// - `cancelled` — interactive confirmation did not match
 pub fn cmd_del(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx del <name>"));
@@ -192,6 +239,24 @@ pub fn cmd_del(con: &Connection, args: &[String]) -> Result<(), GxxError> {
 }
 
 /// `gxx pos|lvl|pron|def|note <word> [value]`
+///
+/// Get or set a single field on a word entry. Without `value`, prints
+/// the current value (or `-` if unset). With `value`, sets it.
+///
+/// Field mapping:
+///
+/// | Command | JSON key |
+/// |---------|----------|
+/// | `pos` | `pos` |
+/// | `lvl` | `level` |
+/// | `pron` | `pronunciation` |
+/// | `def` | `def` |
+/// | `note` | `notes` |
+///
+/// # Errors
+///
+/// - `usage: gxx <field> <name> [value]` — no word
+/// - `no word '<name>'. add it first: gxx add <name>` — entry not found
 pub fn cmd_set_word(con: &Connection, field: &str, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg(format!(
@@ -232,11 +297,29 @@ pub fn cmd_set_word(con: &Connection, field: &str, args: &[String]) -> Result<()
 }
 
 /// `gxx ex <word> ["text"] | N "text" | -N`
+///
+/// Dispatches example management for a word entry. Delegates to
+/// [`crate::cmd::ex::cmd_ex`] with `kind = "word"`.
 pub fn cmd_ex_word(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     cmd_ex(con, "word", args)
 }
 
-/// `gxx sense <word>`
+/// `gxx sense <word> [add|del|show]`
+///
+/// Manage polysemy senses (numbered definitions with optional notes
+/// and examples).
+///
+/// - List: `gxx sense <word>`
+/// - Add: `gxx sense <word> add "definition" [--note "..."]`
+/// - Delete: `gxx sense <word> del N`
+/// - Show: `gxx sense <word> show N`
+///
+/// # Errors
+///
+/// - `usage: gxx sense <word> [add|del|show]` — no word
+/// - `no sense #N (have M)` — sense number out of range
+/// - `invalid sense number` — non-numeric argument
+/// - `unknown sense subcommand: <x>` — invalid subcommand
 pub fn cmd_sense(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx sense <word> [add|del|show]"));
@@ -353,7 +436,20 @@ pub fn cmd_sense(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx coll <word>`
+/// `gxx coll <word> [add|del]`
+///
+/// Manage collocations (common word pairings).
+///
+/// - List: `gxx coll <word>`
+/// - Add: `gxx coll <word> add "collocation"`
+/// - Delete: `gxx coll <word> del N`
+///
+/// # Errors
+///
+/// - `usage: gxx coll <word> [add|del]` — no word
+/// - `no collocation #N (have M)` — number out of range
+/// - `invalid collocation number` — non-numeric argument
+/// - `unknown collocation subcommand: <x>` — invalid subcommand
 pub fn cmd_coll(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx coll <word> [add|del]"));
@@ -423,7 +519,19 @@ pub fn cmd_coll(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx family <word>`
+/// `gxx family <word> [add|del]`
+///
+/// Manage word-family members (related words with optional POS).
+///
+/// - List: `gxx family <word>`
+/// - Add: `gxx family <word> add <related-word> [-p POS]`
+/// - Delete: `gxx family <word> del <related-word>`
+///
+/// # Errors
+///
+/// - `usage: gxx family <word> [add|del]` — no word
+/// - `family member '<word>' not found` — deletion target absent
+/// - `unknown family subcommand: <x>` — invalid subcommand
 pub fn cmd_family(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx family <word> [add|del]"));

@@ -1,34 +1,59 @@
-//! Error type for gxx.
+//! Shared error type for `gxx`.
+//!
+//! [`GxxError`] is a single enum covering all failure modes: I/O,
+//! SQLite, JSON, WAV, ONNX Runtime, shape, resample, buffer, and
+//! anyhow. It is the return type of every command handler and the
+//! TTS pipeline.
+//!
+//! In `main`, a [`GxxError`] is printed as `error: <message>` and the
+//! process exits with code 1.
 
 use thiserror::Error;
 
+/// Unified error type for `gxx`.
+///
+/// Each variant wraps a human-readable message. `From` impls convert
+/// common library errors (SQLite, JSON, WAV, ONNX, ndarray, rubato,
+/// anyhow) into the appropriate variant.
 #[derive(Debug, Error)]
 pub enum GxxError {
+    /// Generic message error.
     #[error("{0}")]
     Msg(String),
+    /// I/O error.
     #[error("io: {0}")]
     Io(String),
+    /// SQLite error.
     #[error("sqlite: {0}")]
     Sqlite(String),
+    /// JSON serialisation / deserialisation error.
     #[error("json: {0}")]
     Json(String),
+    /// WAV file error.
     #[error("wav: {0}")]
     Wav(String),
+    /// ONNX Runtime error.
     #[error("onnx: {0}")]
     Onnx(String),
+    /// Array shape error.
     #[error("shape: {0}")]
     Shape(String),
+    /// Resample error.
     #[error("resample: {0}")]
     Resample(String),
+    /// Resampler construction error.
     #[error("resample construction: {0}")]
     ResampleConstruction(String),
+    /// Buffer size error.
     #[error("buffer size: {0}")]
     BufferSize(String),
+    /// Anyhow error.
     #[error("anyhow: {0}")]
     Anyhow(String),
 }
 
 impl GxxError {
+    /// Construct a generic message error.
     pub fn msg<S: Into<String>>(s: S) -> Self {
         GxxError::Msg(s.into())
     }

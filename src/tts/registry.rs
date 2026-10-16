@@ -1,7 +1,18 @@
 //! TTS Model Registry and Management
 //!
-//! Discovers Piper models in the model/ directory, generates stable hash IDs,
-//! stores metadata, and manages the active model selection.
+//! Discovers Piper models in the `model/` directory, generates stable
+//! hash IDs, stores metadata, and manages the active model selection.
+//!
+//! Model layout:
+//! ```text
+//! model/<lang>/<voice-quality>/<lang>-<voice>-<quality>.onnx
+//! model/<lang>/<voice-quality>/<lang>-<voice>-<quality>.onnx.json
+//! model/<lang>/<voice-quality>/MODEL_CARD
+//! ```
+//!
+//! Each model gets a stable ID derived from its filename stem (first
+//! 12 chars of SHA-256). Moving the model directory does not change the
+//! ID.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,6 +23,9 @@ use crate::error::GxxError;
 use crate::tts::model::PiperConfig;
 
 /// Registry entry for a discovered TTS model.
+///
+/// Fields `default_*` come from the optional `MODEL_CARD` file and are
+/// applied as synthesis defaults unless overridden by CLI flags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     /// Stable hash ID (first 12 chars of SHA256 of model path)
@@ -46,6 +60,9 @@ pub struct ModelEntry {
 }
 
 /// Model registry containing all discovered models.
+///
+/// Serialisable so it can be cached or inspected. Discovery is
+/// performed by [`ModelRegistry::discover`].
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ModelRegistry {
     models: HashMap<String, ModelEntry>,
@@ -60,6 +77,10 @@ impl ModelRegistry {
     }
 
     /// Discover all Piper models in the standard model directories.
+    ///
+    /// Scans up to `MAX_DEPTH=3` levels deep in each candidate
+    /// directory. Supports flat, legacy, and `<lang>/<quality>`
+    /// layouts.
     pub fn discover() -> Result<Self, GxxError> {
         let mut registry = Self::new();
         for dir in candidate_model_dirs() {
@@ -80,7 +101,7 @@ impl ModelRegistry {
         self.models.get(id)
     }
 
-    /// Get all models as a vector.
+    /// Get all models as a vector, sorted by name.
     pub fn all(&self) -> Vec<&ModelEntry> {
         let mut models: Vec<_> = self.models.values().collect();
         models.sort_by(|a, b| a.name.cmp(&b.name));
@@ -98,6 +119,8 @@ impl ModelRegistry {
     /// 1. language prefix (`"en"` matches `"en_GB"` and `"en_US"`)
     /// 2. exact voice name (`"cori"`, `"amir"`)
     /// 3. exact language code (`"en_GB"`)
+    ///
+    /// Unavailable models are skipped.
     pub fn find_for_query(&self, query: &str) -> Option<&ModelEntry> {
         let q = query.to_lowercase();
         self.all().into_iter().find(|e| {
@@ -112,9 +135,11 @@ impl ModelRegistry {
 /// Recursively scan `dir` for `.onnx` files up to `MAX_DEPTH` levels.
 ///
 /// Supports both layouts:
-///   model/<name>.onnx                          (flat, depth 0)
-///   model/v1/<name>.onnx                       (legacy, depth 1)
-///   model/<lang>/<voice-quality>/<name>.onnx   (new, depth 2)
+/// ```text
+/// model/<name>.onnx                          (flat, depth 0)
+/// model/v1/<name>.onnx                       (legacy, depth 1)
+/// model/<lang>/<voice-quality>/<name>.onnx   (new, depth 2)
+/// ```
 fn discover_in_dir(dir: &Path, registry: &mut ModelRegistry, depth: usize) {
     const MAX_DEPTH: usize = 3;
     let entries = match fs::read_dir(dir) {
@@ -135,7 +160,10 @@ fn discover_in_dir(dir: &Path, registry: &mut ModelRegistry, depth: usize) {
     }
 }
 
-/// Parse a model entry from an .onnx file path.
+/// Parse a model entry from an `.onnx` file path.
+///
+/// Reads the matching `.onnx.json` config for metadata and the optional
+/// `MODEL_CARD` for language, quality, and synthesis defaults.
 fn parse_model_entry(onnx_path: &Path) -> Option<ModelEntry> {
     let config_path = onnx_path.with_extension("onnx.json");
     if !config_path.exists() {
@@ -209,7 +237,10 @@ fn parse_model_entry(onnx_path: &Path) -> Option<ModelEntry> {
     })
 }
 
-/// Parse MODEL_CARD content for metadata.
+/// Parse `MODEL_CARD` content for metadata.
+///
+/// Recognised keys: `Language`, `Quality`, `VowelStretch`,
+/// `LengthScale`, `NoiseScale`, `NoiseW`.
 struct ModelCardInfo {
     language: String,
     quality: String,
@@ -255,7 +286,10 @@ fn parse_model_card(content: &str) -> ModelCardInfo {
 }
 
 /// Generate a stable model ID from the ONNX file path.
-/// Uses first 12 chars of SHA256 of the relative path from model/ root.
+///
+/// Uses the filename stem (not the full path) so the ID stays stable
+/// when the model directory is restructured (e.g. versioned →
+/// language). Returns the first 12 hex chars of the hash.
 fn generate_model_id(onnx_path: &Path) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -272,7 +306,7 @@ fn generate_model_id(onnx_path: &Path) -> String {
     format!("{:x}", hasher.finish())[..12].to_string()
 }
 
-/// Get candidate model directories (same as in tts::model).
+/// Get candidate model directories (same as in `tts::model`).
 fn candidate_model_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
@@ -295,13 +329,18 @@ fn candidate_model_dirs() -> Vec<PathBuf> {
 }
 
 /// Configuration for the active TTS model.
+///
+/// Persisted to `<home>/model_config.json` so the active model
+/// survives across invocations.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     /// Active model ID
     pub active_model_id: Option<String>,
 }
 
-/// Load the active model configuration from ~/.gxx/model_config.json
+/// Load the active model configuration from `<home>/model_config.json`.
+///
+/// Returns a default (no active model) when the file does not exist.
 pub fn load_model_config() -> Result<ModelConfig, GxxError> {
     let config_path = model_config_path();
     if !config_path.exists() {
@@ -312,7 +351,7 @@ pub fn load_model_config() -> Result<ModelConfig, GxxError> {
     Ok(config)
 }
 
-/// Save the active model configuration to ~/.gxx/model_config.json
+/// Save the active model configuration to `<home>/model_config.json`.
 pub fn save_model_config(config: &ModelConfig) -> Result<(), GxxError> {
     let config_path = model_config_path();
     let content = serde_json::to_string_pretty(config)?;
@@ -321,13 +360,20 @@ pub fn save_model_config(config: &ModelConfig) -> Result<(), GxxError> {
 }
 
 /// Get the path to the model configuration file.
+///
+/// Stored under `<home>/model_config.json`, so it follows the vault
+/// / `GXX_HOME` resolution.
 fn model_config_path() -> PathBuf {
     let mut p = crate::db::home_dir();
     p.push("model_config.json");
     p
 }
 
-/// Get the active model's PiperConfig, or fall back to auto-discovery.
+/// Get the active model's [`PiperConfig`], or fall back to
+/// auto-discovery.
+///
+/// If an active model is set and available, loads its config. Otherwise
+/// falls back to the legacy `resolve_model()` path.
 pub fn get_active_config() -> Result<PiperConfig, GxxError> {
     let config = load_model_config()?;
 
@@ -362,6 +408,13 @@ pub fn get_active_onnx_path() -> Result<PathBuf, GxxError> {
 }
 
 /// Set the active model by ID.
+///
+/// Validates that the ID exists in the registry, then persists it to
+/// `model_config.json`.
+///
+/// # Errors
+///
+/// - `Model '<id>' not found. Run 'gxx model list' to see available models.`
 pub fn set_active_model(model_id: &str) -> Result<(), GxxError> {
     let registry = ModelRegistry::discover()?;
     if registry.get(model_id).is_none() {

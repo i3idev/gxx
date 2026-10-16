@@ -1,4 +1,9 @@
-//! Audio cache management.
+//! Synthesis cache management.
+//!
+//! Synthesised audio is cached on disk as WAV files keyed by a hash of
+//! the text, model identity, and key inference parameters. This avoids
+//! re-running ONNX inference for repeated text. Playback parameters
+//! (repeat, speed, volume) are NOT part of the cache key.
 
 use dirs;
 use std::path::PathBuf;
@@ -7,7 +12,9 @@ use crate::error::GxxError;
 use crate::tts::model::PiperConfig;
 
 /// Get the cache directory for TTS audio.
-/// Uses ~/.local/share/gxx/audio/ on Linux, equivalent on other platforms.
+///
+/// Uses `~/.local/share/gxx/audio/` on Linux (XDG data dir), with
+/// equivalents on other platforms. Creates the directory if needed.
 pub fn cache_dir() -> Result<PathBuf, GxxError> {
     let base = dirs::data_local_dir()
         .ok_or_else(|| GxxError::msg("Could not determine local data directory"))?;
@@ -17,6 +24,7 @@ pub fn cache_dir() -> Result<PathBuf, GxxError> {
 }
 
 /// Generate a cache key for the given text and model config.
+///
 /// The key includes:
 /// - Text hash (for exact text matching)
 /// - Model identity (voice name, version)
@@ -52,7 +60,8 @@ pub fn cache_key(text: &str, config: &PiperConfig) -> String {
 }
 
 /// Get the cache file path for a given text and model.
-/// Creates subdirectory structure: cache_dir/<key>/audio.wav
+///
+/// Creates subdirectory structure: `cache_dir/<key>/audio.wav`.
 pub fn cache_path(text: &str, config: &PiperConfig) -> Result<PathBuf, GxxError> {
     let key = cache_key(text, config);
     let dir = cache_dir()?.join(&key);
@@ -61,7 +70,13 @@ pub fn cache_path(text: &str, config: &PiperConfig) -> Result<PathBuf, GxxError>
 }
 
 /// Check if cached audio exists and is valid.
-/// Read cached audio samples from WAV file.
+///
+/// Returns `Ok(vec)` of f32 samples, or an error if the cache is
+/// corrupt or unreadable.
+///
+/// # Errors
+///
+/// Returns an error if the cached WAV cannot be read or is not mono.
 pub fn read_cached_audio(text: &str, config: &PiperConfig) -> Result<Vec<f32>, GxxError> {
     let path = cache_path(text, config)?;
     let mut reader = hound::WavReader::open(&path)?;
@@ -80,6 +95,9 @@ pub fn read_cached_audio(text: &str, config: &PiperConfig) -> Result<Vec<f32>, G
 }
 
 /// Write audio samples to cache.
+///
+/// Samples are encoded as mono 16-bit PCM WAV and stored at
+/// `cache_path(text, config)`.
 pub fn write_cache(text: &str, config: &PiperConfig, samples: &[f32]) -> Result<(), GxxError> {
     let path = cache_path(text, config)?;
     let wav_bytes = crate::tts::audio::write_wav(samples, config.audio.sample_rate)?;
@@ -88,7 +106,9 @@ pub fn write_cache(text: &str, config: &PiperConfig, samples: &[f32]) -> Result<
 }
 
 /// Get or synthesize audio with caching.
-/// If cached, returns cached audio. Otherwise synthesizes, caches, and returns.
+///
+/// If cached, returns cached audio. Otherwise synthesizes, caches, and
+/// returns. This is the main entry point for text synthesis.
 pub fn get_or_synthesize(text: &str, config: &PiperConfig) -> Result<Vec<f32>, GxxError> {
     let path = cache_path(text, config)?;
 

@@ -1,5 +1,15 @@
-//! All text output (show, lists, examples). Pure functions returning String.
-//! Output is plain ASCII layout only — no colours, no emoji, no tables crate.
+//! Plain-text rendering of entries for CLI output.
+//!
+//! All functions here are pure: they take a [`serde_json::Value`]
+//! record and return a [`String`]. Output uses only ASCII layout —
+//! no colours, no emoji, no external table crate. ANSI styling is
+//! applied via [`crate::style`] helpers.
+//!
+//! Section ordering for `show`:
+//!
+//! - Words: `def`, `tr`, `syn`+`ant`, `ex`, `sense`, `coll`,
+//!   `family`, `note`
+//! - Grammar/Style/Form: `rule`+`desc`, `ex`, `err`, `note`
 
 use serde_json::Value;
 use std::path::Path;
@@ -7,16 +17,19 @@ use std::path::Path;
 use crate::model::{label, lang_of, title_of};
 use crate::style;
 
-/// Format example lines exactly like Python.
+/// Format example lines exactly like the Python version.
+///
 /// Output:
-///   EXAMPLES (N)
-///    1> en text
+/// ```text
+/// EXAMPLES (N)
+///  1> en text
 ///     = fa text
 ///
-///    2> en text
+///  2> en text
 ///     = fa text
-/// ...
-/// (no trailing blank line)
+/// ```
+///
+/// Returns `"no examples"` when the array is empty.
 pub fn ex_lines(examples: &[Value]) -> String {
     if examples.is_empty() {
         return "no examples".to_string();
@@ -36,9 +49,12 @@ pub fn ex_lines(examples: &[Value]) -> String {
     out.join("\n")
 }
 
-/// Build blocks for each section (def, tr, syn, ant, ex, note for words;
-/// rule, desc, ex, err, note for grammar/style/form).
-/// Returns a map of section key -> lines.
+/// Build per-section blocks from a record.
+///
+/// Returns a map of section key → lines. Words produce `def`, `tr`,
+/// `syn`, `ant`, `sense`, `coll`, `family`, `ex`, `note` blocks;
+/// grammar/style/form produce `rule`, `desc`, `err`, `ex`, `note`.
+/// Empty sections are omitted.
 pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<String, Vec<String>> {
     let mut b = std::collections::BTreeMap::new();
     if kind == "word" {
@@ -193,9 +209,10 @@ pub fn entry_blocks(kind: &str, rec: &Value) -> std::collections::BTreeMap<Strin
     b
 }
 
-/// Build the header line.
-/// Word: "word  (pos)  [level]  /pronunciation/"
-/// Grammar/Style/Form: "title  [gram|style|form]  [lang]  [level]  (cat)"
+/// Build the header line for an entry.
+///
+/// Word: `"<title>  (<pos>)  [<level>]  /<pronunciation>/"`
+/// Grammar/Style/Form: `"<title>  [<kind>]  [<lang>]  [<level>]  (<cat>)"`
 pub fn header(kind: &str, rec: &Value) -> String {
     let t = title_of(rec);
     if kind == "word" {
@@ -222,11 +239,20 @@ pub fn header(kind: &str, rec: &Value) -> String {
     }
 }
 
-/// Main render function.
-/// If sections is empty, render full entry with bars and timestamps.
-/// If sections non-empty, render only those sections (after title line).
-/// Sections for word: def, tr, syn, ant, ex, sense, coll, family, note
-/// Sections for grammar: rule, desc, ex, err, note
+/// Main render function for `gxx show`.
+///
+/// If `sections` is empty, renders the full entry with header bars and
+/// timestamps. If `sections` is non-empty, renders only the requested
+/// sections after the title line.
+///
+/// Sections for words: `def`, `tr`, `syn`, `ant`, `ex`, `sense`,
+/// `coll`, `family`, `note`.
+/// Sections for grammar: `rule`, `desc`, `ex`, `err`, `note`.
+///
+/// # Errors
+///
+/// Returns `error: unknown section '<s>' (use: ...)` for unknown
+/// section names.
 pub fn render_entry(kind: &str, rec: &Value, sections: &[String]) -> String {
     let blocks = entry_blocks(kind, rec);
     let (order, valid): (Vec<Vec<&str>>, Vec<&str>) = if kind == "word" {
@@ -312,8 +338,9 @@ pub fn render_entry(kind: &str, rec: &Value, sections: &[String]) -> String {
     lines.join("\n")
 }
 
-/// Render list output for words (cmd_list).
-/// Format: "{title:<18} {pos or -:<10} {level or -:<4} {translations[:3]}"
+/// Render list output for words (`gxx list`).
+///
+/// Format: `"{title:<18} {pos or -:<10} {level or -:<4} {translations[:3]}"`
 pub fn render_word_list(rec: &Value) -> String {
     let title = title_of(rec);
     let pos = rec.get("pos").and_then(|v| v.as_str()).unwrap_or("-");
@@ -334,8 +361,9 @@ pub fn render_word_list(rec: &Value) -> String {
     format!("{:<18} {:<10} {:<4} {}", title, pos, lvl, trs.join(", "))
 }
 
-/// Render list output for grammar/style/form (cmd_glist).
-/// Format: "{title:<28} {level or -:<4} {cat or -:<10} {rule}"
+/// Render list output for grammar/style/form (`gxx gram list`).
+///
+/// Format: `"{title:<28} {level or -:<4} {cat or -:<10} {rule}"`
 pub fn render_gram_list(rec: &Value) -> String {
     let title = title_of(rec);
     let lvl = rec.get("level").and_then(|v| v.as_str()).unwrap_or("-");

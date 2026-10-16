@@ -1,4 +1,22 @@
-//! Command dispatch for clap-based CLI.
+//! Command dispatch for the clap-based CLI.
+//!
+//! This module is the orchestration layer between [`crate::cli`] (the
+//! argument definitions) and [`crate::cmd`] (the individual command
+//! implementations). It:
+//!
+//! - applies global flags (`--quiet`, `--no-color`, `--vault`) before
+//!   dispatching
+//! - translates clap-derived argument structs into the legacy
+//!   `Vec<String>` argument vectors used by the command handlers
+//! - handles JSON output (`--json`) for `show`, `find`, `list`
+//! - implements TTS commands (`say`, `paragraph`, `read`) and model
+//!   management (`model list/use/current/info/clear`)
+//! - provides the `run_internal` entry point used by `gxx load`
+//!
+//! Most user-facing commands are dispatched by calling the corresponding
+//! function in [`crate::cmd`]. This module exists so that clap parsing
+//! and the legacy argument-vector command handlers share a single
+//! implementation.
 
 use crate::cli::{
     Cli, CollAction, Command, DbCommand, FamilyAction, GramCommand, ModelCommand, SenseAction,
@@ -17,7 +35,20 @@ use crate::tts::registry::{
 };
 use rusqlite::Connection;
 
-/// Run a clap-parsed CLI (handles global flags and subcommands).
+/// Run a clap-parsed CLI, applying global flags and dispatching the
+/// subcommand.
+///
+/// Global flags handled here:
+///
+/// - `--quiet` / `-q` — sets the global quiet state so command handlers
+///   suppress informational output.
+/// - `--no-color` — disables ANSI colors via [`crate::style::set_mode`].
+///
+/// When no subcommand is supplied, prints the usage summary.
+///
+/// # Errors
+///
+/// Returns a [`GxxError`] if the dispatched command fails.
 pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
     // Handle global flags first
     if cli.quiet {
@@ -35,6 +66,19 @@ pub fn run_cli(cli: Cli) -> Result<(), GxxError> {
 }
 
 /// Run a clap-parsed command (subcommand only).
+///
+/// This is the central dispatch function. It:
+///
+/// 1. Applies `--vault` / `-v` (via [`crate::db::set_vault`]) if present.
+/// 2. Opens a connection to the active (or `--db`-overridden) database.
+/// 3. Translates clap argument structs into the legacy `Vec<String>`
+///    argument vectors used by the command handlers in [`crate::cmd`].
+/// 4. Handles `--json` output for `show`, `find`, `list`.
+///
+/// # Errors
+///
+/// Returns a [`GxxError`] if the database cannot be opened or the
+/// dispatched command fails.
 pub fn run_clap(
     cmd: Command,
     db_override: Option<&str>,
@@ -134,6 +178,12 @@ pub fn run_clap(
     }
 }
 
+/// Dispatch a `gxx db` subcommand.
+///
+/// Database commands operate on the data directory, not a specific
+/// database, so `db_override` is ignored. An in-memory SQLite
+/// connection is used only to satisfy the handler signature; the actual
+/// file operations are performed directly by [`crate::cmd::db`].
 fn run_db(sub: DbCommand, _db_override: Option<&str>) -> Result<(), GxxError> {
     let con = Connection::open_in_memory()?;
     match sub {
@@ -159,6 +209,11 @@ fn run_db(sub: DbCommand, _db_override: Option<&str>) -> Result<(), GxxError> {
     }
 }
 
+/// Dispatch the `gxx add` command.
+///
+/// Opens the active database and delegates to [`crate::cmd::word::cmd_add`]
+/// after translating clap flags (`-p`, `-l`) into the legacy argument
+/// vector format.
 fn run_add(
     args: crate::cli::AddArgs,
     db_override: Option<&str>,
@@ -178,6 +233,11 @@ fn run_add(
     cmd_add(&con, &argv)
 }
 
+/// Dispatch the `gxx show` command.
+///
+/// When `--json` is set, prints the matching entry as a JSON object (or
+/// array if the name matches multiple kinds). Otherwise delegates to
+/// [`crate::cmd::word::cmd_show`].
 fn run_show(
     args: crate::cli::ShowArgs,
     db_override: Option<&str>,
@@ -194,6 +254,10 @@ fn run_show(
     }
 }
 
+/// Dispatch the `gxx find` command.
+///
+/// When `--json` is set, prints matching records as a JSON array.
+/// Otherwise delegates to [`crate::cmd::word::cmd_find`].
 fn run_find(
     args: crate::cli::FindArgs,
     db_override: Option<&str>,
@@ -212,6 +276,11 @@ fn run_find(
     }
 }
 
+/// Dispatch the `gxx list` command.
+///
+/// Translates clap flags (`--pos`, `--lvl`, `--lang`) into the legacy
+/// argument vector and delegates to [`crate::cmd::word::cmd_list`].
+/// When `--json` is set, prints matching word records as a JSON array.
 fn run_list(
     args: crate::cli::ListArgs,
     db_override: Option<&str>,
@@ -239,6 +308,10 @@ fn run_list(
     }
 }
 
+/// Dispatch the `gxx del` command.
+///
+/// Passes `--yes` through to the handler so the interactive confirmation
+/// prompt is skipped when requested.
 fn run_del(args: crate::cli::DelArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let argv = if args.yes {
@@ -249,6 +322,10 @@ fn run_del(args: crate::cli::DelArgs, db_override: Option<&str>) -> Result<(), G
     cmd_del(&con, &argv)
 }
 
+/// Dispatch the `gxx tr` command.
+///
+/// The optional `lang` argument is placed before the `+x`/`-y` operations
+/// so the handler can detect it from the first token.
 fn run_tr(args: crate::cli::TrArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -259,6 +336,10 @@ fn run_tr(args: crate::cli::TrArgs, db_override: Option<&str>) -> Result<(), Gxx
     cmd_tr(&con, &argv)
 }
 
+/// Dispatch `gxx syn` or `gxx ant`.
+///
+/// `field` is `"syn"` or `"ant"`; the handler maps it to the `synonyms`
+/// or `antonyms` JSON key.
 fn run_syn_ant(
     field: &str,
     args: crate::cli::SynAntArgs,
@@ -270,6 +351,16 @@ fn run_syn_ant(
     cmd_syn_ant(&con, field, &argv)
 }
 
+/// Dispatch the `gxx ex` command.
+///
+/// Translates clap flags (`--number`, `--delete`) into the legacy
+/// argument-vector format understood by [`crate::cmd::ex::cmd_ex`]:
+///
+/// - `gxx ex <word> "text"` → `["word", "text"]` (add example)
+/// - `gxx ex <word> N "text"` → `["word", N, "text"]` (edit side N)
+/// - `gxx ex <word> --delete --number N` → `["word", "-N"]` (delete N)
+///
+/// `--delete` requires `--number` and cannot be combined with example text.
 fn run_ex(args: crate::cli::ExArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -294,6 +385,10 @@ fn run_ex(args: crate::cli::ExArgs, db_override: Option<&str>) -> Result<(), Gxx
     cmd_ex_word(&con, &argv)
 }
 
+/// Dispatch the `gxx sense` command.
+///
+/// Translates the clap `SenseAction` subcommand into the legacy argument
+/// vector (`add` / `del` / `show` with number).
 fn run_sense(args: crate::cli::SenseArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -320,6 +415,10 @@ fn run_sense(args: crate::cli::SenseArgs, db_override: Option<&str>) -> Result<(
     cmd_sense(&con, &argv)
 }
 
+/// Dispatch the `gxx coll` command.
+///
+/// Translates the clap `CollAction` subcommand into the legacy argument
+/// vector (`add` / `del` with number).
 fn run_coll(args: crate::cli::CollArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -338,6 +437,10 @@ fn run_coll(args: crate::cli::CollArgs, db_override: Option<&str>) -> Result<(),
     cmd_coll(&con, &argv)
 }
 
+/// Dispatch the `gxx family` command.
+///
+/// Translates the clap `FamilyAction` subcommand into the legacy
+/// argument vector (`add` with optional `-p`, `del` by word).
 fn run_family(args: crate::cli::FamilyArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -360,6 +463,11 @@ fn run_family(args: crate::cli::FamilyArgs, db_override: Option<&str>) -> Result
     cmd_family(&con, &argv)
 }
 
+/// Dispatch the `gxx say` command.
+///
+/// Translates clap flags (`--example`, `--repeat`, `--slow`, `--very-slow`,
+/// `--soft`, `--phonemes`) into the legacy argument vector and delegates
+/// to [`crate::cmd::word::cmd_say`].
 fn run_say(args: crate::cli::SayArgs, db_override: Option<&str>) -> Result<(), GxxError> {
     let con = crate::db::connect(db_override)?;
     let mut argv = vec![args.word];
@@ -389,59 +497,16 @@ fn run_say(args: crate::cli::SayArgs, db_override: Option<&str>) -> Result<(), G
 
 /// Find a model by language code ("en", "fa") or voice name ("cori", "amir")
 /// and load its PiperConfig.
-fn apply_inference_overrides(
-    config: &mut crate::tts::model::PiperConfig,
-    length_scale: Option<f32>,
-    noise_scale: Option<f32>,
-    noise_w: Option<f32>,
-    vowel_stretch: Option<u32>,
-) {
-    if let Some(v) = length_scale {
-        config.inference.length_scale = v;
-    }
-    if let Some(v) = noise_scale {
-        config.inference.noise_scale = v;
-    }
-    if let Some(v) = noise_w {
-        config.inference.noise_w = v;
-    }
-    if let Some(v) = vowel_stretch {
-        config.vowel_stretch = v.min(3);
-    }
-}
-
-/// Apply MODEL_CARD defaults for a model, only where the caller did not
-/// provide an explicit override.
-fn apply_model_card_defaults(
-    config: &mut crate::tts::model::PiperConfig,
-    entry: &crate::tts::registry::ModelEntry,
-    length_scale_override: Option<f32>,
-    noise_scale_override: Option<f32>,
-    noise_w_override: Option<f32>,
-    vowel_stretch_override: Option<u32>,
-) {
-    if length_scale_override.is_none() {
-        if let Some(v) = entry.default_length_scale {
-            config.inference.length_scale = v;
-        }
-    }
-    if noise_scale_override.is_none() {
-        if let Some(v) = entry.default_noise_scale {
-            config.inference.noise_scale = v;
-        }
-    }
-    if noise_w_override.is_none() {
-        if let Some(v) = entry.default_noise_w {
-            config.inference.noise_w = v;
-        }
-    }
-    if vowel_stretch_override.is_none() {
-        if let Some(v) = entry.default_vowel_stretch {
-            config.vowel_stretch = v.min(3);
-        }
-    }
-}
-
+///
+/// The query is matched against the model registry using
+/// [`ModelRegistry::find_for_query`], which accepts a language prefix
+/// (e.g. `"en"`), a voice name (`"cori"`), or an exact language code
+/// (`"en_GB"`). MODEL_CARD defaults and CLI overrides are applied to the
+/// loaded config.
+///
+/// # Errors
+///
+/// Returns an error if no model matches the query.
 fn load_config_for_voice(
     query: &str,
     length_scale: Option<f32>,
@@ -476,8 +541,70 @@ fn load_config_for_voice(
     Ok(config)
 }
 
+/// Apply MODEL_CARD defaults for a model, only where the caller did not
+/// provide an explicit override.
+///
+/// This lets a voice's `MODEL_CARD` declare sensible defaults for
+/// `length_scale`, `noise_scale`, `noise_w`, and `vowel_stretch` that
+/// are applied unless the user passed the corresponding CLI flag.
+fn apply_model_card_defaults(
+    config: &mut crate::tts::model::PiperConfig,
+    entry: &crate::tts::registry::ModelEntry,
+    length_scale_override: Option<f32>,
+    noise_scale_override: Option<f32>,
+    noise_w_override: Option<f32>,
+    vowel_stretch_override: Option<u32>,
+) {
+    if length_scale_override.is_none() {
+        if let Some(v) = entry.default_length_scale {
+            config.inference.length_scale = v;
+        }
+    }
+    if noise_scale_override.is_none() {
+        if let Some(v) = entry.default_noise_scale {
+            config.inference.noise_scale = v;
+        }
+    }
+    if noise_w_override.is_none() {
+        if let Some(v) = entry.default_noise_w {
+            config.inference.noise_w = v;
+        }
+    }
+    if vowel_stretch_override.is_none() {
+        if let Some(v) = entry.default_vowel_stretch {
+            config.vowel_stretch = v.min(3);
+        }
+    }
+}
+
+/// Apply explicit CLI inference overrides to a [`PiperConfig`].
+///
+/// Each override is applied only when `Some`. `vowel_stretch` is clamped
+/// to 3.
+fn apply_inference_overrides(
+    config: &mut crate::tts::model::PiperConfig,
+    length_scale: Option<f32>,
+    noise_scale: Option<f32>,
+    noise_w: Option<f32>,
+    vowel_stretch: Option<u32>,
+) {
+    if let Some(v) = length_scale {
+        config.inference.length_scale = v;
+    }
+    if let Some(v) = noise_scale {
+        config.inference.noise_scale = v;
+    }
+    if let Some(v) = noise_w {
+        config.inference.noise_w = v;
+    }
+    if let Some(v) = vowel_stretch {
+        config.vowel_stretch = v.min(3);
+    }
+}
+
 /// Like [`load_config_for_voice`] but returns `None` instead of erroring
-/// when no model matches. Used by `--auto` to skip unknown-language segments.
+/// when no model matches. Used by `--auto` to skip unknown-language
+/// segments.
 fn try_load_config_for_voice(
     query: &str,
     length_scale: Option<f32>,
@@ -508,6 +635,11 @@ fn try_load_config_for_voice(
 }
 
 /// Ctrl+C signal flag shared across `read` invocations.
+///
+/// Registered once via [`ctrlc::set_handler`] so that pressing Ctrl+C
+/// during playback sets the flag and prints an interrupt message. The
+/// flag is checked by [`run_read`] between paragraphs and by
+/// [`crate::tts::playback::play_audio`] during playback.
 static READ_STOP_FLAG: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
     std::sync::OnceLock::new();
 
@@ -525,6 +657,22 @@ fn get_read_stop_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         .clone()
 }
 
+/// Dispatch the `gxx read` command.
+///
+/// Reads a text file paragraph by paragraph and speaks each paragraph.
+/// Supports:
+///
+/// - `--clear-progress` — forget saved progress and exit
+/// - `--resume` — start from the last saved paragraph
+/// - `--save-progress` — save the next paragraph index after each one
+/// - `--start N` — start from paragraph N (1-based)
+/// - `--out PATH` — render all paragraphs to a single WAV file
+/// - `--auto` / `--voice CODE` — per-segment language routing
+/// - `--sentence-split` — split paragraphs into sentences
+///
+/// Progress is stored under `~/.local/share/gxx/progress/<hash>.txt`,
+/// where `<hash>` is derived from the file path, size, and mtime.
+/// Editing the file invalidates the bookmark.
 fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<(), GxxError> {
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
@@ -733,6 +881,10 @@ fn run_read(args: crate::cli::ReadArgs, _db_override: Option<&str>) -> Result<()
 }
 
 /// Print a table of discovered models with the active one marked.
+///
+/// Columns: ID, LANG, VOICE, QUALITY, SRATE, STRETCH, LS, NS, NW,
+/// ACTIVE. STRETCH/LS/NS/NW show MODEL_CARD defaults (or `-` when
+/// absent).
 fn print_voice_list() -> Result<(), GxxError> {
     let registry = crate::tts::registry::ModelRegistry::discover()?;
     let active_id = crate::tts::registry::load_model_config()
@@ -777,8 +929,9 @@ fn print_voice_list() -> Result<(), GxxError> {
 }
 
 /// Compute a stable per-file progress key from path + size + mtime.
+///
 /// If the file is replaced or modified, the key changes and old progress
-/// is not reused.
+/// is not reused. This is what makes `--resume` safe across file edits.
 fn progress_key(file: &std::path::Path) -> Result<String, GxxError> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -800,6 +953,9 @@ fn progress_key(file: &std::path::Path) -> Result<String, GxxError> {
     Ok(format!("{:x}", h.finish()))
 }
 
+/// Path to the progress file for a given text file.
+///
+/// Stored under `<XDG data dir>/gxx/progress/<hash>.txt`.
 fn progress_path(file: &std::path::Path) -> Result<std::path::PathBuf, GxxError> {
     let dir = dirs::data_local_dir()
         .ok_or_else(|| GxxError::msg("no local data dir"))?
@@ -809,12 +965,20 @@ fn progress_path(file: &std::path::Path) -> Result<std::path::PathBuf, GxxError>
     Ok(dir.join(format!("{}.txt", progress_key(file)?)))
 }
 
+/// Load saved progress (1-based paragraph index) for a file.
+///
+/// Returns `None` if no progress exists or the stored value is not a
+/// valid integer.
 fn load_progress(file: &std::path::Path) -> Option<usize> {
     let p = progress_path(file).ok()?;
     let s = std::fs::read_to_string(&p).ok()?;
     s.trim().parse::<usize>().ok()
 }
 
+/// Save the next paragraph index (1-based) for a file.
+///
+/// The saved value may exceed the file length, which signals "finished"
+/// on resume.
 fn save_progress(file: &std::path::Path, paragraph: usize) -> Result<(), GxxError> {
     let p = progress_path(file)?;
     std::fs::write(&p, paragraph.to_string())
@@ -822,6 +986,9 @@ fn save_progress(file: &std::path::Path, paragraph: usize) -> Result<(), GxxErro
     Ok(())
 }
 
+/// Forget saved progress for a file.
+///
+/// Safe to call when no progress exists.
 fn clear_progress(file: &std::path::Path) -> Result<(), GxxError> {
     let p = progress_path(file)?;
     if p.exists() {
@@ -834,7 +1001,7 @@ fn clear_progress(file: &std::path::Path) -> Result<(), GxxError> {
 ///
 /// Prefers blank-line separation (`\n\n`). If the text has no blank
 /// lines, falls back to single newlines so plain line-based files still
-/// split into per-line paragraphs.
+/// split into per-line paragraphs. Empty paragraphs are filtered out.
 fn split_paragraphs(text: &str) -> Vec<&str> {
     let sep = if text.contains("\n\n") { "\n\n" } else { "\n" };
     text.split(sep)
@@ -847,7 +1014,13 @@ fn split_paragraphs(text: &str) -> Vec<&str> {
 ///
 /// Each chunk is `(text, lang, pause_before_ms)`; `pause_before_ms` is
 /// the silence inserted before that chunk. Chunks are synthesized
-/// sequentially without playing, and `config_for` picks the model.
+/// sequentially without playing, and `config_for` picks the model for
+/// each chunk's language.
+///
+/// # Errors
+///
+/// Returns an error if no segment had a matching model, or if segments
+/// have mismatched sample rates.
 fn render_chunks_to_wav<F>(
     chunks: &[(String, String, u64)],
     out: &std::path::Path,
@@ -969,6 +1142,20 @@ fn build_chunks(
     chunks
 }
 
+/// Dispatch the `gxx paragraph` command.
+///
+/// Speaks arbitrary text (no DB lookup). Text can be supplied inline,
+/// from a file via `--file`, or via manual IPA via `--phonemes`.
+///
+/// Supported modes:
+///
+/// - `--list-voices` — print a voice table and exit
+/// - `--out PATH` — render to WAV instead of playing
+/// - `--auto` — per-segment language routing
+/// - `--voice CODE` — override model by language code or voice name
+/// - `--sentence-split` — split into sentences with pauses
+/// - `--save-progress` / `--resume` / `--clear-progress` — progress
+///   tracking (only meaningful with `--file`)
 fn run_paragraph(
     args: crate::cli::ParagraphArgs,
     _db_override: Option<&str>,
@@ -1217,6 +1404,12 @@ fn run_paragraph(
     Ok(())
 }
 
+/// Dispatch a field get/set command (`pos`, `lvl`, `pron`, `def`,
+/// `note`).
+///
+/// Without a `value`, prints the current field value (or `-` if unset).
+/// With a `value`, sets the field. Delegates to
+/// [`crate::cmd::word::cmd_set_word`].
 fn run_field(
     field: &str,
     args: crate::cli::FieldArgs,
@@ -1230,6 +1423,11 @@ fn run_field(
     cmd_set_word(&con, field, &argv)
 }
 
+/// Dispatch a grammar/style/form command group.
+///
+/// `kind` is `"grammar"`, `"style"`, or `"form"`. Translates the clap
+/// `GramCommand` into the legacy argument vector and delegates to
+/// [`crate::cmd::grammar::cmd_group`].
 fn run_gram(
     kind: &str,
     sub: GramCommand,
@@ -1317,6 +1515,10 @@ fn run_gram(
     cmd_group(&con, kind, &argv)
 }
 
+/// Convert a [`GramCommand`] into its string name.
+///
+/// Used to build the legacy argument vector for
+/// [`crate::cmd::grammar::cmd_group`].
 fn sub_to_str(sub: &GramCommand) -> &'static str {
     match sub {
         GramCommand::Add(_) => "add",
@@ -1333,7 +1535,15 @@ fn sub_to_str(sub: &GramCommand) -> &'static str {
     }
 }
 
-// Re-export for load command compatibility - uses legacy argument parsing
+/// Run a command from a legacy argument vector.
+///
+/// This is the entry point used by `gxx load <file.gxx>`. It parses the
+/// first token as the command name and dispatches to the corresponding
+/// handler in [`crate::cmd`]. `--json` is extracted from the vector and
+/// applied to `show`, `find`, and `list`.
+///
+/// Unknown commands are treated as direct word lookups (equivalent to
+/// `gxx show <word>`).
 pub fn run_internal(argv: Vec<String>, db_override: Option<&str>) -> Result<(), GxxError> {
     if argv.is_empty() {
         return Ok(());
@@ -1416,7 +1626,10 @@ pub fn run_internal(argv: Vec<String>, db_override: Option<&str>) -> Result<(), 
     }
 }
 
-// JSON output helpers (kept from original run.rs)
+/// JSON output helper for `gxx list`.
+///
+/// Prints matching word records as a pretty-printed JSON array.
+/// Supports `--pos`, `--lvl`, and `--lang` filters.
 fn print_list_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     use serde_json::Value;
 
@@ -1482,6 +1695,10 @@ fn print_list_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
+/// JSON output helper for `gxx find`.
+///
+/// Prints matching records as a pretty-printed JSON array. `--all` is
+/// ignored (it only affects the text output path).
 fn print_find_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     let filtered: Vec<String> = args
         .iter()
@@ -1499,6 +1716,11 @@ fn print_find_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
+/// JSON output helper for `gxx show <word> --json`.
+///
+/// Searches all four kinds (word, grammar, style, form) and prints the
+/// matching record as a JSON object. If the name matches multiple
+/// kinds, prints a JSON array.
 fn print_entry_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     use crate::db::load_rec_fallback;
 
@@ -1526,6 +1748,13 @@ fn print_entry_json(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     }
 }
 
+/// Dispatch the `gxx model` subcommand.
+///
+/// - `list` — print a table of discovered models
+/// - `current` — print the active model ID (or "auto (not set)")
+/// - `use <id>` — set the active model
+/// - `info <id>` — print detailed model info
+/// - `clear` — clear the active model
 fn run_model(sub: ModelCommand, _json_output: bool) -> Result<(), GxxError> {
     match sub {
         ModelCommand::List => {
@@ -1610,6 +1839,7 @@ fn run_model(sub: ModelCommand, _json_output: bool) -> Result<(), GxxError> {
     }
 }
 
+/// Truncate a string to `max` characters, appending `...` if truncated.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
@@ -1647,6 +1877,8 @@ COMMANDS:
 
 OPTIONS:
     --db <NAME>             Use specific database
+    --vault <PATH>          Path to vault folder containing .gxx/ data
+    -v <PATH>               Short form of --vault
     --json                  Output as JSON
     -q, --quiet             Suppress non-error output
     -h, --help              Show help

@@ -1,4 +1,8 @@
 //! Audio WAV generation and processing.
+//!
+//! Provides WAV encoding, pitch-preserving time-stretching (via
+//! rubato's WSOLA implementation), and volume scaling. All functions
+//! operate on `Vec<f32>` mono samples at a given sample rate.
 
 use hound::{WavSpec, WavWriter};
 use std::io::Cursor;
@@ -6,7 +10,9 @@ use std::io::Cursor;
 use crate::error::GxxError;
 
 /// Write audio samples to a WAV file in memory.
-/// Returns the WAV bytes.
+///
+/// Returns the WAV bytes. Samples are mono 16-bit PCM; f32 samples
+/// are clamped to `[-1.0, 1.0]` and converted to `i16`.
 pub fn write_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, GxxError> {
     let mut buffer = Cursor::new(Vec::new());
 
@@ -30,8 +36,14 @@ pub fn write_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, GxxError>
 }
 
 /// Apply time-stretching (speed change) while preserving pitch.
-/// Uses rubato's Fft resampler for high-quality pitch-preserving time stretching.
-/// speed: 1.0 = normal, 0.7 = slow, 0.5 = very slow
+///
+/// Uses rubato's Fft resampler for high-quality pitch-preserving time
+/// stretching. `speed` is a playback multiplier: `1.0` = normal,
+/// `0.7` = slow, `0.5` = very slow.
+///
+/// # Errors
+///
+/// Returns an error if `speed` is not in `(0.0, 2.0]`.
 pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec<f32>, GxxError> {
     if speed <= 0.0 || speed > 2.0 {
         return Err(GxxError::msg(format!(
@@ -179,6 +191,13 @@ pub fn time_stretch(samples: &[f32], speed: f32, sample_rate: u32) -> Result<Vec
     Ok(output)
 }
 
+/// Apply volume scaling to audio samples.
+///
+/// `volume` is a multiplier: `1.0` = normal, `0.6` = soft.
+///
+/// # Errors
+///
+/// Returns an error if `volume` is not in `(0.0, 2.0]`.
 pub fn apply_volume(samples: &[f32], volume: f32) -> Result<Vec<f32>, GxxError> {
     if volume <= 0.0 || volume > 2.0 {
         return Err(GxxError::msg(format!("Invalid volume factor: {}", volume)));
@@ -192,7 +211,13 @@ pub fn apply_volume(samples: &[f32], volume: f32) -> Result<Vec<f32>, GxxError> 
 }
 
 /// Process audio with speed and volume adjustments.
-/// Returns processed audio samples.
+///
+/// Applies time-stretching first (pitch-preserving), then volume
+/// scaling. Returns processed audio samples.
+///
+/// # Errors
+///
+/// Returns an error if `speed` or `volume` is out of range.
 pub fn process_audio(
     samples: &[f32],
     speed: f32,

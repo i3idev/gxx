@@ -1,4 +1,8 @@
-//! Translation, synonym, antonym commands: tr, syn, ant.
+//! Translation, synonym, and antonym commands: `tr`, `syn`, `ant`.
+//!
+//! All three use the same `+add` / `-remove` operation syntax.
+//! `tr` manages the `translations` object (keyed by language code);
+//! `syn` and `ant` manage the `synonyms` and `antonyms` arrays.
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -7,7 +11,21 @@ use crate::db::{load_rec_fallback, save_rec};
 use crate::error::GxxError;
 use crate::model::{add_unique, clean, lang_of, remove_item};
 
-/// `gxx tr <word> [lang] +x -y`
+/// `gxx tr <word> [lang] +x -y …`
+///
+/// Manage translations for a word entry. The optional `lang` argument
+/// (e.g. `fa`, `en`) is auto-detected from the word's script if
+/// omitted. `+text` adds, `-text` removes, plain `text` adds.
+/// Duplicates are skipped. Removing a non-existent item prints a
+/// warning but does not fail.
+///
+/// If the translation list for a language becomes empty, the language
+/// key is removed.
+///
+/// # Errors
+///
+/// - `usage: gxx tr <word> [lang] +x -y` — no word
+/// - `no word '<name>'. add it first: gxx add <name>` — entry not found
 pub fn cmd_tr(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx tr <word> [lang] +x -y"));
@@ -73,7 +91,18 @@ pub fn cmd_tr(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     Ok(())
 }
 
-/// `gxx syn|ant <word> +x -y`
+/// `gxx syn <word> +x -y …` / `gxx ant <word> +x -y …`
+///
+/// Manage synonyms or antonyms for a word entry. `field` is `"syn"`
+/// (manages `synonyms`) or `"ant"` (manages `antonyms`).
+///
+/// Without operations, lists current values comma-separated. With
+/// `+text`, adds (deduplicated). With `-text`, removes.
+///
+/// # Errors
+///
+/// - `usage: gxx <field> <word> +x -y` — no word
+/// - `no word '<name>'. add it first: gxx add <name>` — entry not found
 pub fn cmd_syn_ant(con: &Connection, field: &str, args: &[String]) -> Result<(), GxxError> {
     let key = if field == "syn" {
         "synonyms"
