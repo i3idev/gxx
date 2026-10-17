@@ -122,7 +122,8 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name#v }}"
+            VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           else
             VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           fi
@@ -178,7 +179,8 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name#v }}"
+            VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           else
             VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           fi
@@ -264,7 +266,8 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name#v }}"
+            VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           else
             VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           fi
@@ -319,7 +322,8 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name#v }}"
+            VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           else
             VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
           fi
@@ -382,7 +386,8 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION="${{ github.ref_name#v }}"
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
 
