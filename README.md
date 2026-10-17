@@ -96,8 +96,8 @@ release assets. Manual workflow runs (`workflow_dispatch`) build and
 upload artifacts without publishing a GitHub Release.
 
 Runtime notes:
-- The Linux build targets Ubuntu 22.04 and may require glibc 2.34+ and
-  `libstdc++6` / `libgcc-s1`.
+- The Linux build targets Ubuntu latest and may require a recent glibc
+  (2.38+) plus `libstdc++6` / `libgcc-s1`.
 - macOS binaries are architecture-specific, not universal binaries.
 ## License
 

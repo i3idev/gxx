@@ -20,7 +20,7 @@ env:
 jobs:
   validate:
     name: Validate CLI
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -110,7 +110,7 @@ jobs:
   build-linux:
     name: Build Linux x86_64
     needs: validate
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
 
     steps:
@@ -167,7 +167,7 @@ jobs:
   build-debian:
     name: Build Debian package
     needs: validate
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 40
 
     steps:
@@ -216,7 +216,7 @@ jobs:
           Priority: optional
           Architecture: amd64
           Maintainer: gxx maintainers
-          Depends: libc6 (>= 2.34), libstdc++6, libgcc-s1
+          Depends: libc6 (>= 2.38), libstdc++6, libgcc-s1
           Description: Bilingual (English / Persian) word and grammar notebook
            gxx is a local, offline-first CLI for managing bilingual
            vocabulary and grammar notes with text-to-speech support.
