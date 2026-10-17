@@ -310,7 +310,7 @@ jobs:
   build-macos-x86_64:
     name: Build macOS Intel
     needs: validate
-    runs-on: macos-13
+    runs-on: macos-15-intel
     timeout-minutes: 40
 
     steps:
