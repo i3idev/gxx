@@ -121,10 +121,11 @@ pub fn cmd_gdel(con: &Connection, kind: &str, args: &[String]) -> Result<(), Gxx
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx del <name>"));
     }
-    load_rec_fallback(con, kind, &args[0])?; // verify exists
+    let rec = load_rec_fallback(con, kind, &args[0])?; // verify exists
+    let title = crate::model::title_of(&rec);
     con.execute(
         "DELETE FROM entries WHERE id = ?1",
-        [crate::model::entry_id(kind, &args[0])],
+        [crate::model::entry_id(kind, &title)],
     )?;
     if !crate::model::STATE.lock().unwrap().quiet {
         println!("{}: {}", crate::style::warn("deleted"), clean(&args[0]));

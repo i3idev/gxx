@@ -102,7 +102,7 @@ pub fn say_with_active_model(
     options: PlaybackOptions,
     stop_flag: Option<Arc<AtomicBool>>,
 ) -> Result<Vec<f32>, GxxError> {
-    let config = get_active_config()?;
+    let config = crate::tts::registry::get_active_config_for_text(text)?;
     say_text(text, &config, options, stop_flag)
 }
 
