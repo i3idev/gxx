@@ -369,11 +369,30 @@ fn model_config_path() -> PathBuf {
     p
 }
 
+/// Apply `MODEL_CARD` defaults to a loaded config.
+fn apply_card_defaults(config: &mut PiperConfig, entry: &ModelEntry) {
+    if let Some(v) = entry.default_length_scale {
+        config.inference.length_scale = v;
+    }
+    if let Some(v) = entry.default_noise_scale {
+        config.inference.noise_scale = v;
+    }
+    if let Some(v) = entry.default_noise_w {
+        config.inference.noise_w = v;
+    }
+    if let Some(v) = entry.default_vowel_stretch {
+        config.vowel_stretch = v.min(3);
+    }
+}
+
 /// Get the active model's [`PiperConfig`], or fall back to
 /// auto-discovery.
 ///
-/// If an active model is set and available, loads its config. Otherwise
-/// falls back to the legacy `resolve_model()` path.
+/// If an active model is set and available, loads its config and applies
+/// its `MODEL_CARD` defaults. Otherwise auto-discovers a model from the
+/// registry (preferring an English voice), applying its card defaults.
+/// Only if no registry model exists does it fall back to the legacy
+/// `resolve_model()` path.
 pub fn get_active_config() -> Result<PiperConfig, GxxError> {
     let config = load_model_config()?;
 
@@ -381,12 +400,33 @@ pub fn get_active_config() -> Result<PiperConfig, GxxError> {
         let registry = ModelRegistry::discover()?;
         if let Some(model) = registry.get(&active_id) {
             if model.available {
-                return crate::tts::model::load_config(&model.config_path);
+                let mut cfg = crate::tts::model::load_config(&model.config_path)?;
+                cfg.onnx_path = Some(model.onnx_path.clone());
+                apply_card_defaults(&mut cfg, model);
+                return Ok(cfg);
             }
         }
     }
 
-    // Fallback to auto-discovery (existing behavior)
+    let registry = ModelRegistry::discover()?;
+    let models = registry.all();
+    let model = if models.is_empty() {
+        None
+    } else {
+        let idx = models
+            .iter()
+            .position(|m| m.language.starts_with("en"))
+            .unwrap_or(0);
+        models.get(idx).copied()
+    };
+    if let Some(model) = model {
+        let mut cfg = crate::tts::model::load_config(&model.config_path)?;
+        cfg.onnx_path = Some(model.onnx_path.clone());
+        apply_card_defaults(&mut cfg, model);
+        return Ok(cfg);
+    }
+
+    // Legacy fallback (no registry models available).
     crate::tts::model::load_config(&crate::tts::model::model_config_path()?)
 }
 
@@ -403,8 +443,68 @@ pub fn get_active_onnx_path() -> Result<PathBuf, GxxError> {
         }
     }
 
-    // Fallback to auto-discovery (existing behavior)
+    let registry = ModelRegistry::discover()?;
+    let models = registry.all();
+    let model = if models.is_empty() {
+        None
+    } else {
+        let idx = models
+            .iter()
+            .position(|m| m.language.starts_with("en"))
+            .unwrap_or(0);
+        models.get(idx).copied()
+    };
+    if let Some(model) = model {
+        return Ok(model.onnx_path.clone());
+    }
+
     crate::tts::model::model_onnx_path()
+}
+
+/// Load a model config by language code or voice name query.
+pub fn load_config_for_query(query: &str) -> Result<PiperConfig, GxxError> {
+    let registry = ModelRegistry::discover()?;
+    let entry = registry.find_for_query(query).ok_or_else(|| {
+        GxxError::msg(format!(
+            "no available model for voice '{}'. run `gxx model list`",
+            query
+        ))
+    })?;
+    let mut config = crate::tts::model::load_config(&entry.config_path)?;
+    config.onnx_path = Some(entry.onnx_path.clone());
+    apply_card_defaults(&mut config, entry);
+    Ok(config)
+}
+
+/// Resolve a model config for the given text.
+///
+/// Preserves an explicitly selected active model. Otherwise selects a
+/// model based on the detected language of `text` (`en` or `fa`);
+/// mixed/unknown text defaults to an English model.
+pub fn get_active_config_for_text(text: &str) -> Result<PiperConfig, GxxError> {
+    let config = load_model_config()?;
+
+    if let Some(active_id) = config.active_model_id {
+        let registry = ModelRegistry::discover()?;
+        if let Some(model) = registry.get(&active_id) {
+            if model.available {
+                let mut cfg = crate::tts::model::load_config(&model.config_path)?;
+                cfg.onnx_path = Some(model.onnx_path.clone());
+                apply_card_defaults(&mut cfg, model);
+                return Ok(cfg);
+            }
+        }
+    }
+
+    let query = match crate::tts::phonemizer::detect_language(text) {
+        "fa" => "fa",
+        _ => "en",
+    };
+    if let Ok(cfg) = load_config_for_query(query) {
+        return Ok(cfg);
+    }
+    // Fall back to any available model.
+    get_active_config()
 }
 
 /// Set the active model by ID.

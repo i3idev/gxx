@@ -76,32 +76,40 @@ pub struct PiperModel {
 /// Model and config are deliberately resolved together so they can never
 /// accidentally come from different model versions.
 fn try_resolve_ryan(dir: &Path) -> Option<PiperModel> {
-    let onnx_path = dir.join("v2/en_US-ryan-high.onnx");
-    let config_path = dir.join("v2/en_US-ryan-high.onnx.json");
-
-    if onnx_path.exists() && config_path.exists() {
-        Some(PiperModel {
-            onnx_path,
-            config_path,
-        })
-    } else {
-        None
+    // Support both the legacy flat layout and the current
+    // `<lang>/<voice-quality>/` layout.
+    let candidates = [
+        dir.join("v2/en_US-ryan-high.onnx"),
+        dir.join("en_US/ryan-high/en_US-ryan-high.onnx"),
+    ];
+    for onnx_path in candidates {
+        let config_path = onnx_path.with_extension("onnx.json");
+        if onnx_path.exists() && config_path.exists() {
+            return Some(PiperModel {
+                onnx_path,
+                config_path,
+            });
+        }
     }
+    None
 }
 
 /// Resolve the Cori Piper model.
 fn try_resolve_cori(dir: &Path) -> Option<PiperModel> {
-    let onnx_path = dir.join("en_GB-cori-high.onnx");
-    let config_path = dir.join("en_GB-cori-high.onnx.json");
-
-    if onnx_path.exists() && config_path.exists() {
-        Some(PiperModel {
-            onnx_path,
-            config_path,
-        })
-    } else {
-        None
+    let candidates = [
+        dir.join("en_GB-cori-high.onnx"),
+        dir.join("en_GB/cori-high/en_GB-cori-high.onnx"),
+    ];
+    for onnx_path in candidates {
+        let config_path = onnx_path.with_extension("onnx.json");
+        if onnx_path.exists() && config_path.exists() {
+            return Some(PiperModel {
+                onnx_path,
+                config_path,
+            });
+        }
     }
+    None
 }
 
 /// Resolve the TTS model directory.

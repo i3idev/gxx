@@ -227,10 +227,11 @@ pub fn cmd_del(con: &Connection, args: &[String]) -> Result<(), GxxError> {
     if args.is_empty() {
         return Err(GxxError::msg("usage: gxx del <name>"));
     }
-    load_rec_fallback(con, "word", &args[0])?; // verify exists
+    let rec = load_rec_fallback(con, "word", &args[0])?; // verify exists
+    let title = title_of(&rec);
     con.execute(
         "DELETE FROM entries WHERE id = ?1",
-        [entry_id("word", &args[0])],
+        [entry_id("word", &title)],
     )?;
     if !STATE.lock().unwrap().quiet {
         println!("{}: {}", crate::style::warn("deleted"), clean(&args[0]));
